@@ -144,13 +144,18 @@ func (r *EosClusterReconciler) getClusterInfo(ctx context.Context, cluster *eosv
 
 func (r *EosClusterReconciler) generateNewCluster(ctx context.Context, cluster *eosv1.EosCluster, nodes *v1.NodeList) error {
 	var node1 = nodes.Items[0]
+	var status = "Ready"
+
+	if ! r.calculateClusterStatus(nodes){
+		status = "NotReady"
+	}
 
 	var clusterSpec = eosv1.EosClusterSpec{
 		Host: cluster.Spec.Host,
 		Nodes: len(nodes.Items),
 		Version: node1.Status.NodeInfo.KubeletVersion,
 		Architecture: node1.Status.NodeInfo.Architecture,
-		Status: r.calculateClusterStatus(nodes),
+		Status: status,
 	}
 
 	cluster.Spec = clusterSpec
@@ -158,34 +163,30 @@ func (r *EosClusterReconciler) generateNewCluster(ctx context.Context, cluster *
 	return nil
 }
 
-func (r *EosClusterReconciler) calculateClusterStatus(nodes *v1.NodeList) string{
-	var status = "Ready"
+func (r *EosClusterReconciler) calculateClusterStatus(nodes *v1.NodeList) bool{
 
 	// calculate cluster status from nodes status
-/*	for i := range nodes.Items {
-		node := nodes.Items[i]
-		conditionMap := make(map[api.NodeConditionType]*api.NodeCondition)
-		NodeAllConditions := []api.NodeConditionType{api.NodeReady}
-		for i := range node.Status.Conditions {
-			cond := node.Status.Conditions[i]
-			conditionMap[cond.Type] = &cond
-	}
-	var status []string
-	for _, validCondition := range NodeAllConditions {
-		if condition, ok := conditionMap[validCondition]; ok {
-			if condition.Status == api.ConditionTrue {
-				status = append(status, string(condition.Type))
-			} else {
-				status = append(status, "Not"+string(condition.Type))
-			}
+	// Cluster is ready if all nodes are ready
+	for i := range nodes.Items {
+		ready, _ :=r.getNodeStatus(&nodes.Items[i])
+		if !ready {
+			return false
 		}
 	}
-	}
-	if node1.Spec.Unschedulable {
-		status = append(status, "SchedulingDisabled")
-	}*/
 
-	return status
+	return true
+}
+
+func (r *EosClusterReconciler) getNodeStatus(node *v1.Node) (bool, error) {
+
+	for i := range node.Status.Conditions {
+		cond := node.Status.Conditions[i]
+		if cond.Type == v1.NodeReady{
+			return cond.Status == v1.ConditionTrue, nil
+		}
+	}
+
+	return false, fmt.Errorf("failed to get node Ready status")
 }
 
 func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eosv1.EosCluster) error {
