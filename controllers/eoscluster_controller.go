@@ -25,7 +25,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
-
 	"github.com/go-logr/logr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,7 +40,7 @@ const (
 // EosClusterReconciler reconciles a EosCluster object
 type EosClusterReconciler struct {
 	client.Client
-	Log logr.Logger
+	Log      logr.Logger
 	AuthOpts *gophercloud.AuthOptions
 }
 
@@ -71,17 +70,13 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return ctrl.Result{}, err
 	}
 
-
 	// Get cluster info
 	r.getClusterInfo(ctx, &cluster, token)
 
 	// Update cluster CRD
 
-
 	return ctrl.Result{}, nil
 }
-
-
 
 func (r *EosClusterReconciler) getKeystoneToken(ctx context.Context) (*tokens.Token, error) {
 	logger := getLoggerOrDie(ctx)
@@ -106,18 +101,18 @@ func (r *EosClusterReconciler) getKeystoneToken(ctx context.Context) (*tokens.To
 
 func (r *EosClusterReconciler) getClusterInfo(ctx context.Context, cluster *eosv1.EosCluster, token *tokens.Token) {
 	cs, _ := r.getK8sClient(ctx, cluster, token)
-	nodes, _ := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	nodes, _ := cs.CoreV1().Nodes().List(metav1.ListOptions{})
 
-	fmt.Printf("%+v\n",nodes)
+	fmt.Printf("%+v\n", nodes)
 
 }
 
-func (r *EosClusterReconciler) getK8sClient(ctx context.Context, cluster *eosv1.EosCluster, token *tokens.Token) (*kubernetes.Clientset, error){
+func (r *EosClusterReconciler) getK8sClient(ctx context.Context, cluster *eosv1.EosCluster, token *tokens.Token) (*kubernetes.Clientset, error) {
 	logger := getLoggerOrDie(ctx)
 
 	// creates the clientset
 	config := rest.Config{
-		Host: cluster.Spec.Host,
+		Host:        cluster.Spec.Host,
 		BearerToken: token.ID,
 	}
 	cs, err := kubernetes.NewForConfig(&config)
