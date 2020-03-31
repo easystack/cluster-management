@@ -1,0 +1,7 @@
+apiVersion: eos.exampel.org/v1
+kind: EosCluster
+metadata:
+  name: eoscluster-sample
+spec:
+  # Add fields here
+  foo: bar

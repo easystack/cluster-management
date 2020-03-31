@@ -1,0 +1,7 @@
+version: "2"
+domain: exampel.org
+repo: github.com/cluster-management
+resources:
+- group: eos
+  version: v1
+  kind: EosCluster
