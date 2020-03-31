@@ -22,8 +22,10 @@ import (
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/go-logr/logr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -58,7 +60,6 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-
 	// Cluster is in the process of being deleted, so no need to do anything.
 	if cluster.DeletionTimestamp != nil {
 		return ctrl.Result{}, nil
@@ -70,10 +71,19 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return ctrl.Result{}, err
 	}
 
-	// Get cluster info
-	r.getClusterInfo(ctx, &cluster, token)
+	// Get cluster latest info
+	err = r.getClusterInfo(ctx, &cluster, token)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
-	// Update cluster CRD
+	fmt.Printf("%+v\n", cluster)
+
+	// Update EOSCluster CRD
+	err = r.updateClusterCRD(ctx, &cluster)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -99,14 +109,6 @@ func (r *EosClusterReconciler) getKeystoneToken(ctx context.Context) (*tokens.To
 	return token, nil
 }
 
-func (r *EosClusterReconciler) getClusterInfo(ctx context.Context, cluster *eosv1.EosCluster, token *tokens.Token) {
-	cs, _ := r.getK8sClient(ctx, cluster, token)
-	nodes, _ := cs.CoreV1().Nodes().List(metav1.ListOptions{})
-
-	fmt.Printf("%+v\n", nodes)
-
-}
-
 func (r *EosClusterReconciler) getK8sClient(ctx context.Context, cluster *eosv1.EosCluster, token *tokens.Token) (*kubernetes.Clientset, error) {
 	logger := getLoggerOrDie(ctx)
 
@@ -114,6 +116,9 @@ func (r *EosClusterReconciler) getK8sClient(ctx context.Context, cluster *eosv1.
 	config := rest.Config{
 		Host:        cluster.Spec.Host,
 		BearerToken: token.ID,
+		TLSClientConfig: rest.TLSClientConfig{
+			Insecure: true,
+		},
 	}
 	cs, err := kubernetes.NewForConfig(&config)
 	if err != nil {
@@ -123,8 +128,79 @@ func (r *EosClusterReconciler) getK8sClient(ctx context.Context, cluster *eosv1.
 	return cs, nil
 }
 
-func (r *EosClusterReconciler) updateClusters(ctx context.Context, cluster *eosv1.EosCluster) {
+func (r *EosClusterReconciler) getClusterInfo(ctx context.Context, cluster *eosv1.EosCluster, token *tokens.Token) error {
+	logger := getLoggerOrDie(ctx)
+	fmt.Println(token.ID)
 
+	cs, _ := r.getK8sClient(ctx, cluster, token)
+	nodes, err := cs.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		logger.Error(err, "Failed to get nodes")
+		return err
+	}
+
+	return r.generateNewCluster(ctx, cluster, nodes)
+}
+
+func (r *EosClusterReconciler) generateNewCluster(ctx context.Context, cluster *eosv1.EosCluster, nodes *v1.NodeList) error {
+	var node1 = nodes.Items[0]
+
+	var clusterSpec = eosv1.EosClusterSpec{
+		Host: cluster.Spec.Host,
+		Nodes: len(nodes.Items),
+		Version: node1.Status.NodeInfo.KubeletVersion,
+		Architecture: node1.Status.NodeInfo.Architecture,
+		Status: r.calculateClusterStatus(nodes),
+	}
+
+	cluster.Spec = clusterSpec
+
+	return nil
+}
+
+func (r *EosClusterReconciler) calculateClusterStatus(nodes *v1.NodeList) string{
+	var status = "Ready"
+
+	// calculate cluster status from nodes status
+/*	for i := range nodes.Items {
+		node := nodes.Items[i]
+		conditionMap := make(map[api.NodeConditionType]*api.NodeCondition)
+		NodeAllConditions := []api.NodeConditionType{api.NodeReady}
+		for i := range node.Status.Conditions {
+			cond := node.Status.Conditions[i]
+			conditionMap[cond.Type] = &cond
+	}
+	var status []string
+	for _, validCondition := range NodeAllConditions {
+		if condition, ok := conditionMap[validCondition]; ok {
+			if condition.Status == api.ConditionTrue {
+				status = append(status, string(condition.Type))
+			} else {
+				status = append(status, "Not"+string(condition.Type))
+			}
+		}
+	}
+	}
+	if node1.Spec.Unschedulable {
+		status = append(status, "SchedulingDisabled")
+	}*/
+
+	return status
+}
+
+func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eosv1.EosCluster) error {
+	logger := getLoggerOrDie(ctx)
+
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := r.Client.Update(ctx, cluster); err != nil {
+			logger.Error(err, "Failed to update EOSCluster CRD")
+			return err
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to update EOSCluster %s: %v", cluster.Name, err)
+	}
+	return nil
 }
 
 func getLoggerOrDie(ctx context.Context) logr.Logger {

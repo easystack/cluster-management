@@ -4,4 +4,4 @@ metadata:
   name: eoscluster-sample
 spec:
   # Add fields here
-  foo: bar
+  host: https://172.16.118.126:6443

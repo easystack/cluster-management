@@ -18,6 +18,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/gophercloud/gophercloud/openstack"
 	"os"
 
@@ -47,19 +48,29 @@ func init() {
 func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
-	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
+	flag.StringVar(&metricsAddr, "metrics-addr", ":8899", "The address the metric endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.Parse()
 
+	ctrl.SetLogger(zap.Logger(true))
+
+	// set env for test
+	os.Setenv("OS_AUTH_URL", "http://keystone-api.openstack.svc.cluster.local/v3")
+	os.Setenv("OS_PROJECT_NAME", "admin")
+	os.Setenv("OS_PROJECT_DOMAIN_NAME", "Default")
+	os.Setenv("OS_USER_DOMAIN_NAME", "Default")
+	os.Setenv("OS_DOMAIN_NAME", "Default")
+	os.Setenv("OS_USERNAME", "admin")
+	os.Setenv("OS_PASSWORD", "Admin@ES20!8")
+
 	// get ECS cloud admin credential info from env
 	opts, err := openstack.AuthOptionsFromEnv()
 	if err != nil {
+		fmt.Print(err)
 		setupLog.Error(err, "Failed to start since missing necessary openstack environment:")
 		os.Exit(1)
 	}
-
-	ctrl.SetLogger(zap.Logger(true))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:             scheme,

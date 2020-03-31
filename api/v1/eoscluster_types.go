@@ -29,7 +29,12 @@ type EosClusterSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Host must be a host string, a host:port pair, or a URL to the base of the apiserver.
-	Host string
+	Host string `json:"host,omitempty"`
+	Version string `json:"version,omitempty"`
+	Nodes int `json:"nodes,omitempty"`
+	Architecture string `json:"architecture,omitempty"`
+	Status string `json:"status,omitempty"`
+	Type string `json:"type,omitempty"`
 }
 
 // EosClusterStatus defines the observed state of EosCluster
