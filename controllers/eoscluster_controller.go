@@ -28,8 +28,8 @@ import (
 	"time"
 
 	eosv1 "github.com/cluster-management/api/v1"
-	k8sservice "github.com/cluster-management/k8s"
-	osservice "github.com/cluster-management/openstack"
+	"github.com/cluster-management/k8s"
+	"github.com/cluster-management/openstack"
 )
 
 const (
@@ -63,14 +63,14 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	}
 
 	// Get keystone token to access kubernetes API
-	var osClient = osservice.OSService{Opts: r.AuthOpts}
+	var osClient = openstack.OSService{Opts: r.AuthOpts}
 	token, err := osClient.GetKeystoneToken(ctx)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Get cluster latest info
-	var k8sClient = k8sservice.KService{
+	var k8sClient = k8s.KService{
 		Host: cluster.Spec.Host,
 		Token: token,
 	}
@@ -89,25 +89,50 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 }
 
 func (r *EosClusterReconciler) PollingClusterInfo() error {
+	rootCtx := context.Background()
+	logger := r.Log.WithName("Polling")
+	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
+
+	var osClient = openstack.OSService{Opts: r.AuthOpts}
+	var k8sClient = k8s.KService{}
+	var clusterList eosv1.EosClusterList
+
 	for {
-		time.Sleep(2 * time.Second)
+		time.Sleep(3 * time.Second)
 		fmt.Println("polling clusters latest info")
 
-		rootCtx := context.Background()
-		logger := r.Log.WithName("Polling")
-	    ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
-
 	    // Get all EOSCluster CRD
-	    var clusterList eosv1.EosClusterList
 	    err := r.List(ctx, &clusterList)
 		if err != nil {
 			logger.Error(err, "Failed to list EOSClusters")
 		}
 
 	    for i := range clusterList.Items{
-	    	fmt.Printf("%+v\n", clusterList.Items[i])
+	    	r.pollingAndUpdate(ctx, &clusterList.Items[i], &k8sClient, &osClient)
 		}
     }
+}
+
+func (r *EosClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *eosv1.EosCluster, k8sService *k8s.KService, osService *openstack.OSService) error {
+	logger := utils.GetLoggerOrDie(ctx)
+
+	k8sService.Host = cluster.Spec.Host
+	if k8sService.Token == nil || k8sService.Token.ExpiresAt.Before(time.Now()) {
+		logger.Info("Token is nil or is expired, need to renew")
+		token, _ := osService.GetKeystoneToken(ctx)
+		k8sService.Token = token
+	}
+
+	err := k8sService.GetClusterInfo(ctx, cluster)
+	if err != nil {
+		logger.Error(err, "Failed to get cluster latest info")
+	}
+	err = r.updateClusterCRD(ctx, cluster)
+	if err != nil {
+		logger.Error(err, "Failed to update cluster CRD")
+	}
+
+	return nil
 }
 
 func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eosv1.EosCluster) error {

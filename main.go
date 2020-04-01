@@ -72,7 +72,6 @@ func main() {
 		os.Exit(1)
 	}
 
-
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
@@ -86,7 +85,7 @@ func main() {
 
 	var reconciler = controllers.EosClusterReconciler{
 		Client:   mgr.GetClient(),
-		Log:      ctrl.Log.WithName("polling").WithName("Clusters"),
+		Log:      ctrl.Log.WithName("polling").WithName("EosClusters"),
 		AuthOpts: &opts,
 	}
 	go reconciler.PollingClusterInfo()

@@ -44,10 +44,11 @@ func (k *KService) GetClusterInfo(ctx context.Context, cluster *eosv1.EosCluster
 
 	client := k.Client
 	if client == nil {
+		logger.Info("k8s client is nil, need to create new one")
 		client, _ = k.NewK8sClient(ctx)
 	}
 
-	nodes, err := client.CoreV1().Nodes().List(nil, metav1.ListOptions{})
+	nodes, err := client.CoreV1().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		logger.Error(err, "Failed to get nodes")
 		return err
