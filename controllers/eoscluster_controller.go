@@ -93,8 +93,8 @@ func (r *EosClusterReconciler) PollingClusterInfo() error {
 	logger := r.Log.WithName("Polling")
 	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
 
-	var osClient = openstack.OSService{Opts: r.AuthOpts}
-	var k8sClient = k8s.KService{}
+	var osService = openstack.OSService{Opts: r.AuthOpts}
+	var k8sService = k8s.KService{}
 	var clusterList eosv1.EosClusterList
 
 	for {
@@ -108,7 +108,7 @@ func (r *EosClusterReconciler) PollingClusterInfo() error {
 		}
 
 	    for i := range clusterList.Items{
-	    	r.pollingAndUpdate(ctx, &clusterList.Items[i], &k8sClient, &osClient)
+	    	r.pollingAndUpdate(ctx, &clusterList.Items[i], &k8sService, &osService)
 		}
     }
 }

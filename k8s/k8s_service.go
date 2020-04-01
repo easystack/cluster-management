@@ -42,13 +42,12 @@ func (k *KService) NewK8sClient(ctx context.Context) (*kubernetes.Clientset, err
 func (k *KService) GetClusterInfo(ctx context.Context, cluster *eosv1.EosCluster) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
-	client := k.Client
-	if client == nil {
-		logger.Info("k8s client is nil, need to create new one")
-		client, _ = k.NewK8sClient(ctx)
+	if k.Client == nil {
+		logger.Info("GetClusterInfo: no k8s client, need to create new one")
+		k.Client, _ = k.NewK8sClient(ctx)
 	}
 
-	nodes, err := client.CoreV1().Nodes().List(metav1.ListOptions{})
+	nodes, err := k.Client.CoreV1().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		logger.Error(err, "Failed to get nodes")
 		return err
