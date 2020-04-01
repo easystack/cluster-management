@@ -33,4 +33,3 @@ func (c *OSService) GetKeystoneToken(ctx context.Context) (*tokens.Token, error)
 
 	return token, nil
 }
-

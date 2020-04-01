@@ -24,7 +24,8 @@ import (
 	"github.com/gophercloud/gophercloud"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	cli "sigs.k8s.io/controller-runtime/pkg/client"
+	"sync"
 	"time"
 
 	eosv1 "github.com/cluster-management/api/v1"
@@ -36,11 +37,35 @@ const (
 	loggerCtxKey = "logger"
 )
 
+type cachedCluster struct {
+	// The cached state of the cluster
+	cluster *eosv1.EosCluster
+}
+
+type clusterCache struct {
+	mu         sync.Mutex
+	clusterMap map[string]*cachedCluster
+}
+
 // EosClusterReconciler reconciles a EosCluster object
 type EosClusterReconciler struct {
-	client.Client
-	Log      logr.Logger
-	AuthOpts *gophercloud.AuthOptions
+	client     cli.Client
+	log        logr.Logger
+	authOpts   *gophercloud.AuthOptions
+	cache      *clusterCache
+	osService  *openstack.OSService
+	k8sService *k8s.KService
+}
+
+func NewEosClusterReconciler(c cli.Client, logger logr.Logger, opts *gophercloud.AuthOptions, os *openstack.OSService, k8s *k8s.KService) *EosClusterReconciler {
+	return &EosClusterReconciler{
+		client:     c,
+		log:        logger,
+		authOpts:   opts,
+		cache:      &clusterCache{clusterMap: make(map[string]*cachedCluster)},
+		osService:  os,
+		k8sService: k8s,
+	}
 }
 
 // +kubebuilder:rbac:groups=eos.exampel.org,resources=eosclusters,verbs=get;list;watch;create;update;patch;delete
@@ -48,33 +73,26 @@ type EosClusterReconciler struct {
 
 func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	rootCtx := context.Background()
-	logger := r.Log.WithValues("Reconcile", req.NamespacedName)
+	logger := r.log.WithValues("Reconcile", req.NamespacedName)
 	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
+	key := req.Namespace + req.Name
 
 	// your logic start here
 	var cluster eosv1.EosCluster
-	err := r.Get(ctx, req.NamespacedName, &cluster)
+	err := r.client.Get(ctx, req.NamespacedName, &cluster)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+
 	// Cluster is in the process of being deleted, so no need to do anything.
 	if cluster.DeletionTimestamp != nil {
+		r.cache.delete(key)
 		return ctrl.Result{}, nil
 	}
 
-	// Get keystone token to access kubernetes API
-	var osClient = openstack.OSService{Opts: r.AuthOpts}
-	token, err := osClient.GetKeystoneToken(ctx)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Get cluster latest info
-	var k8sClient = k8s.KService{
-		Host: cluster.Spec.Host,
-		Token: token,
-	}
-	err = k8sClient.GetClusterInfo(ctx, &cluster)
+	//
+	r.k8sService.Host = cluster.Spec.Host
+	err = r.k8sService.GetClusterInfo(ctx, &cluster, r.osService)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -90,40 +108,32 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 
 func (r *EosClusterReconciler) PollingClusterInfo() error {
 	rootCtx := context.Background()
-	logger := r.Log.WithName("Polling")
+	logger := r.log.WithName("Polling")
 	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
 
-	var osService = openstack.OSService{Opts: r.AuthOpts}
-	var k8sService = k8s.KService{}
 	var clusterList eosv1.EosClusterList
 
 	for {
 		time.Sleep(3 * time.Second)
 		fmt.Println("polling clusters latest info")
 
-	    // Get all EOSCluster CRD
-	    err := r.List(ctx, &clusterList)
+		// Get all EOSCluster CRD
+		err := r.client.List(ctx, &clusterList)
 		if err != nil {
 			logger.Error(err, "Failed to list EOSClusters")
 		}
 
-	    for i := range clusterList.Items{
-	    	r.pollingAndUpdate(ctx, &clusterList.Items[i], &k8sService, &osService)
+		for i := range clusterList.Items {
+			r.pollingAndUpdate(ctx, &clusterList.Items[i], r.k8sService, r.osService)
 		}
-    }
+	}
 }
 
 func (r *EosClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *eosv1.EosCluster, k8sService *k8s.KService, osService *openstack.OSService) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	k8sService.Host = cluster.Spec.Host
-	if k8sService.Token == nil || k8sService.Token.ExpiresAt.Before(time.Now()) {
-		logger.Info("Token is nil or is expired, need to renew")
-		token, _ := osService.GetKeystoneToken(ctx)
-		k8sService.Token = token
-	}
-
-	err := k8sService.GetClusterInfo(ctx, cluster)
+	err := k8sService.GetClusterInfo(ctx, cluster, osService)
 	if err != nil {
 		logger.Error(err, "Failed to get cluster latest info")
 	}
@@ -136,13 +146,16 @@ func (r *EosClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *eo
 }
 
 func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eosv1.EosCluster) error {
+	fmt.Println("!!!!!!!!!!!!!!!!")
 	logger := utils.GetLoggerOrDie(ctx)
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		if err := r.Client.Update(ctx, cluster); err != nil {
+		if err := r.client.Update(ctx, cluster); err != nil {
 			logger.Error(err, "Failed to update EOSCluster CRD")
 			return err
 		}
+		logger.Info("Update Cluster")
+		fmt.Printf("%+v\n", cluster)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("failed to update EOSCluster %s: %v", cluster.Name, err)
@@ -154,4 +167,37 @@ func (r *EosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&eosv1.EosCluster{}).
 		Complete(r)
+}
+
+// get a cached cluster
+func (s *clusterCache) get(key string) (*cachedCluster, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cluster, ok := s.clusterMap[key]
+	return cluster, ok
+}
+
+// getOrCreate a cluster cache
+func (s *clusterCache) getOrCreate(key string) *cachedCluster {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	instance, ok := s.clusterMap[key]
+	if !ok {
+		s.clusterMap[key] = &cachedCluster{}
+	}
+	return instance
+}
+
+// set a cluster cache
+func (s *clusterCache) set(key string, cluster *cachedCluster) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clusterMap[key] = cluster
+}
+
+// delete a cached cluster
+func (s *clusterCache) delete(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clusterMap, key)
 }

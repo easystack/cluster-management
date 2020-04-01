@@ -19,7 +19,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/cluster-management/k8s"
+	osservice "github.com/cluster-management/openstack"
 	"github.com/gophercloud/gophercloud/openstack"
+	"golang.org/x/net/context"
 	"os"
 
 	eosv1 "github.com/cluster-management/api/v1"
@@ -72,6 +75,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Get keystone token to access kubernetes API
+	ctx := context.WithValue(context.Background(), "Main", setupLog)
+	osClient := osservice.OSService{Opts: &opts}
+	token, _ := osClient.GetKeystoneToken(ctx)
+
+	k8sReconcile := k8s.KService{Token: token}
+	k8sPolling := k8s.KService{Token: token}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
@@ -83,23 +94,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	var reconciler = controllers.EosClusterReconciler{
-		Client:   mgr.GetClient(),
-		Log:      ctrl.Log.WithName("polling").WithName("EosClusters"),
-		AuthOpts: &opts,
-	}
-	go reconciler.PollingClusterInfo()
+	rc := controllers.NewEosClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("EosCluster"), &opts, &osClient, &k8sReconcile)
 
-	if err = (&controllers.EosClusterReconciler{
-		Client:   mgr.GetClient(),
-		Log:      ctrl.Log.WithName("controllers").WithName("EosCluster"),
-		AuthOpts: &opts,
-	}).SetupWithManager(mgr); err != nil {
+	polling := controllers.NewEosClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("EosCluster"), &opts, &osClient, &k8sPolling)
+	go polling.PollingClusterInfo()
+
+	err = rc.SetupWithManager(mgr)
+	if err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "EosCluster")
 		os.Exit(1)
 	}
-	// +kubebuilder:scaffold:builder
 
+	// +kubebuilder:scaffold:builder
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
