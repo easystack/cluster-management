@@ -76,7 +76,7 @@ func main() {
 	}
 
 	// Get keystone token to access kubernetes API
-	ctx := context.WithValue(context.Background(), "Main", setupLog)
+	ctx := context.WithValue(context.Background(), "logger", setupLog)
 	osClient := osservice.OSService{Opts: &opts}
 	token, _ := osClient.GetKeystoneToken(ctx)
 
