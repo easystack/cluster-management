@@ -19,20 +19,17 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"github.com/gophercloud/gophercloud"
-	"github.com/gophercloud/gophercloud/openstack"
-	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
-	"k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/util/retry"
-
+	"github.com/cluster-management/utils"
 	"github.com/go-logr/logr"
+	"github.com/gophercloud/gophercloud"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"time"
 
 	eosv1 "github.com/cluster-management/api/v1"
-	"k8s.io/client-go/kubernetes"
+	k8sservice "github.com/cluster-management/k8s"
+	osservice "github.com/cluster-management/openstack"
 )
 
 const (
@@ -51,7 +48,7 @@ type EosClusterReconciler struct {
 
 func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	rootCtx := context.Background()
-	logger := r.Log.WithValues("eoscluster", req.NamespacedName)
+	logger := r.Log.WithValues("Reconcile", req.NamespacedName)
 	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
 
 	// your logic start here
@@ -65,19 +62,22 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return ctrl.Result{}, nil
 	}
 
-	// Get token
-	token, err := r.getKeystoneToken(ctx)
+	// Get keystone token to access kubernetes API
+	var osClient = osservice.OSService{Opts: r.AuthOpts}
+	token, err := osClient.GetKeystoneToken(ctx)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Get cluster latest info
-	err = r.getClusterInfo(ctx, &cluster, token)
+	var k8sClient = k8sservice.KService{
+		Host: cluster.Spec.Host,
+		Token: token,
+	}
+	err = k8sClient.GetClusterInfo(ctx, &cluster)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-
-	fmt.Printf("%+v\n", cluster)
 
 	// Update EOSCluster CRD
 	err = r.updateClusterCRD(ctx, &cluster)
@@ -88,109 +88,30 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	return ctrl.Result{}, nil
 }
 
-func (r *EosClusterReconciler) getKeystoneToken(ctx context.Context) (*tokens.Token, error) {
-	logger := getLoggerOrDie(ctx)
-	provider, err := openstack.AuthenticatedClient(*r.AuthOpts)
-	if err != nil {
-		logger.Error(err, "Failed to Authenticate to OpenStack")
-		return nil, err
-	}
-	client, err := openstack.NewIdentityV3(provider, gophercloud.EndpointOpts{Region: "RegionOne"})
-	if err != nil {
-		logger.Error(err, "Failed to Initialize Keystone client")
-		return nil, err
-	}
-	token, err := tokens.Create(client, r.AuthOpts).ExtractToken()
-	if err != nil {
-		logger.Error(err, "Failed to Get token")
-		return nil, err
-	}
+func (r *EosClusterReconciler) PollingClusterInfo() error {
+	for {
+		time.Sleep(2 * time.Second)
+		fmt.Println("polling clusters latest info")
 
-	return token, nil
-}
+		rootCtx := context.Background()
+		logger := r.Log.WithName("Polling")
+	    ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
 
-func (r *EosClusterReconciler) getK8sClient(ctx context.Context, cluster *eosv1.EosCluster, token *tokens.Token) (*kubernetes.Clientset, error) {
-	logger := getLoggerOrDie(ctx)
-
-	// creates the clientset
-	config := rest.Config{
-		Host:        cluster.Spec.Host,
-		BearerToken: token.ID,
-		TLSClientConfig: rest.TLSClientConfig{
-			Insecure: true,
-		},
-	}
-	cs, err := kubernetes.NewForConfig(&config)
-	if err != nil {
-		logger.Error(err, "Failed to create k8s client")
-		return nil, err
-	}
-	return cs, nil
-}
-
-func (r *EosClusterReconciler) getClusterInfo(ctx context.Context, cluster *eosv1.EosCluster, token *tokens.Token) error {
-	logger := getLoggerOrDie(ctx)
-	fmt.Println(token.ID)
-
-	cs, _ := r.getK8sClient(ctx, cluster, token)
-	nodes, err := cs.CoreV1().Nodes().List(metav1.ListOptions{})
-	if err != nil {
-		logger.Error(err, "Failed to get nodes")
-		return err
-	}
-
-	return r.generateNewCluster(ctx, cluster, nodes)
-}
-
-func (r *EosClusterReconciler) generateNewCluster(ctx context.Context, cluster *eosv1.EosCluster, nodes *v1.NodeList) error {
-	var node1 = nodes.Items[0]
-	var status = "Ready"
-
-	if ! r.calculateClusterStatus(nodes){
-		status = "NotReady"
-	}
-
-	var clusterSpec = eosv1.EosClusterSpec{
-		Host: cluster.Spec.Host,
-		Nodes: len(nodes.Items),
-		Version: node1.Status.NodeInfo.KubeletVersion,
-		Architecture: node1.Status.NodeInfo.Architecture,
-		Status: status,
-	}
-
-	cluster.Spec = clusterSpec
-
-	return nil
-}
-
-func (r *EosClusterReconciler) calculateClusterStatus(nodes *v1.NodeList) bool{
-
-	// calculate cluster status from nodes status
-	// Cluster is ready if all nodes are ready
-	for i := range nodes.Items {
-		ready, _ :=r.getNodeStatus(&nodes.Items[i])
-		if !ready {
-			return false
+	    // Get all EOSCluster CRD
+	    var clusterList eosv1.EosClusterList
+	    err := r.List(ctx, &clusterList)
+		if err != nil {
+			logger.Error(err, "Failed to list EOSClusters")
 		}
-	}
 
-	return true
-}
-
-func (r *EosClusterReconciler) getNodeStatus(node *v1.Node) (bool, error) {
-
-	for i := range node.Status.Conditions {
-		cond := node.Status.Conditions[i]
-		if cond.Type == v1.NodeReady{
-			return cond.Status == v1.ConditionTrue, nil
+	    for i := range clusterList.Items{
+	    	fmt.Printf("%+v\n", clusterList.Items[i])
 		}
-	}
-
-	return false, fmt.Errorf("failed to get node Ready status")
+    }
 }
 
 func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eosv1.EosCluster) error {
-	logger := getLoggerOrDie(ctx)
+	logger := utils.GetLoggerOrDie(ctx)
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := r.Client.Update(ctx, cluster); err != nil {
@@ -202,14 +123,6 @@ func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eo
 		return fmt.Errorf("failed to update EOSCluster %s: %v", cluster.Name, err)
 	}
 	return nil
-}
-
-func getLoggerOrDie(ctx context.Context) logr.Logger {
-	logger, ok := ctx.Value(loggerCtxKey).(logr.Logger)
-	if !ok {
-		panic("context didn't contain logger")
-	}
-	return logger
 }
 
 func (r *EosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
