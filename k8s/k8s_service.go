@@ -64,6 +64,48 @@ func (k *KService) GetClusterInfo(ctx context.Context, cluster *eosv1.EosCluster
 	return k.generateNewCluster(ctx, cluster, nodes)
 }
 
+func (k *KService) AssignClusterToProjects(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+
+	// create NameSpace
+	k.createNameSpace(ctx, cluster, projects)
+
+	//create Pod Security Policy
+
+	//create Network Policy
+
+	return nil
+}
+
+func (k *KService) UnAssignClusterToProjects(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+
+	// delete NameSpace
+
+	//create Pod Security Policy
+
+	//create Network Policy
+
+	return nil
+}
+
+func (k *KService) createNameSpace(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+	logger := utils.GetLoggerOrDie(ctx)
+
+	for _, p := range projects {
+		ns := &v1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: p,
+			},
+		}
+		_, err := k.Client.CoreV1().Namespaces().Create(ns)
+		if err != nil {
+			logger.Error(err, "Failed to create namespace")
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (k *KService) generateNewCluster(ctx context.Context, cluster *eosv1.EosCluster, nodes *v1.NodeList) error {
 	var node1 = nodes.Items[0]
 	var status = "Ready"
@@ -78,6 +120,7 @@ func (k *KService) generateNewCluster(ctx context.Context, cluster *eosv1.EosClu
 		Version:      node1.Status.NodeInfo.KubeletVersion,
 		Architecture: node1.Status.NodeInfo.Architecture,
 		Status:       status,
+		Projects:     cluster.Spec.Projects,
 	}
 
 	cluster.Spec = clusterSpec

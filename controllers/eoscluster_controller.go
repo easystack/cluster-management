@@ -23,6 +23,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/gophercloud/gophercloud"
 	"k8s.io/client-go/util/retry"
+	"reflect"
 	ctrl "sigs.k8s.io/controller-runtime"
 	cli "sigs.k8s.io/controller-runtime/pkg/client"
 	"sync"
@@ -37,14 +38,9 @@ const (
 	loggerCtxKey = "logger"
 )
 
-type cachedCluster struct {
-	// The cached state of the cluster
-	cluster *eosv1.EosCluster
-}
-
 type clusterCache struct {
 	mu         sync.Mutex
-	clusterMap map[string]*cachedCluster
+	clusterMap map[string]eosv1.EosCluster
 }
 
 // EosClusterReconciler reconciles a EosCluster object
@@ -62,7 +58,7 @@ func NewEosClusterReconciler(c cli.Client, logger logr.Logger, opts *gophercloud
 		client:     c,
 		log:        logger,
 		authOpts:   opts,
-		cache:      &clusterCache{clusterMap: make(map[string]*cachedCluster)},
+		cache:      &clusterCache{clusterMap: make(map[string]eosv1.EosCluster)},
 		osService:  os,
 		k8sService: k8s,
 	}
@@ -84,23 +80,43 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 		return ctrl.Result{}, err
 	}
 
-	// Cluster is in the process of being deleted, so no need to do anything.
+	// Delete event
 	if cluster.DeletionTimestamp != nil {
 		r.cache.delete(key)
 		return ctrl.Result{}, nil
 	}
 
-	//
-	r.k8sService.Host = cluster.Spec.Host
-	err = r.k8sService.GetClusterInfo(ctx, &cluster, r.osService)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+	cached, ok := r.cache.get(key)
+	if !ok {
+		// Add event
+		logger.Info("Add Event", "CRD Spec", cluster)
+		r.k8sService.Host = cluster.Spec.Host
+		err = r.k8sService.GetClusterInfo(ctx, &cluster, r.osService)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		logger.Info("Add Event", "Latest Info", cluster)
 
-	// Update EOSCluster CRD
-	err = r.updateClusterCRD(ctx, &cluster)
-	if err != nil {
-		return ctrl.Result{}, err
+		r.cache.set(key, cluster)
+
+		r.k8sService.AssignClusterToProjects(ctx, &cluster, cluster.Spec.Projects)
+
+		err = r.updateClusterCRD(ctx, &cluster)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+	} else {
+		// Update event
+		logger.Info("Update Event", "Cached", cached)
+		logger.Info("Update Event", "Desired", cluster)
+
+		if reflect.DeepEqual(cached.Spec.Projects, cluster.Spec.Projects) {
+			logger.Info("Do nothing if projects not change")
+		} else {
+			logger.Info("Update Cluster projects info")
+			r.updateClusterProjects(ctx, &cluster, cached.Spec.Projects, cluster.Spec.Projects)
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -132,11 +148,15 @@ func (r *EosClusterReconciler) PollingClusterInfo() error {
 func (r *EosClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *eosv1.EosCluster, k8sService *k8s.KService, osService *openstack.OSService) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
+	logger.Info("!!!!Before Polling", "Before", cluster)
 	k8sService.Host = cluster.Spec.Host
 	err := k8sService.GetClusterInfo(ctx, cluster, osService)
 	if err != nil {
 		logger.Error(err, "Failed to get cluster latest info")
 	}
+
+	logger.Info("!!!!After Polling", "After", cluster)
+
 	err = r.updateClusterCRD(ctx, cluster)
 	if err != nil {
 		logger.Error(err, "Failed to update cluster CRD")
@@ -146,7 +166,6 @@ func (r *EosClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *eo
 }
 
 func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eosv1.EosCluster) error {
-	fmt.Println("!!!!!!!!!!!!!!!!")
 	logger := utils.GetLoggerOrDie(ctx)
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -154,8 +173,6 @@ func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eo
 			logger.Error(err, "Failed to update EOSCluster CRD")
 			return err
 		}
-		logger.Info("Update Cluster")
-		fmt.Printf("%+v\n", cluster)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("failed to update EOSCluster %s: %v", cluster.Name, err)
@@ -169,27 +186,37 @@ func (r *EosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+func (r *EosClusterReconciler) updateClusterProjects(ctx context.Context, cluster *eosv1.EosCluster, cached []string, desired []string) error {
+	added := make([]string, 0)
+	removed := make([]string, 0)
+
+	for _, p := range desired {
+		if !utils.StringInSlice(p, cached) {
+			added = append(added, p)
+		}
+	}
+	r.k8sService.AssignClusterToProjects(ctx, cluster, added)
+
+	for _, p := range cached {
+		if !utils.StringInSlice(p, desired) {
+			removed = append(removed, p)
+		}
+	}
+	r.k8sService.UnAssignClusterToProjects(ctx, cluster, added)
+
+	return nil
+}
+
 // get a cached cluster
-func (s *clusterCache) get(key string) (*cachedCluster, bool) {
+func (s *clusterCache) get(key string) (eosv1.EosCluster, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cluster, ok := s.clusterMap[key]
 	return cluster, ok
 }
 
-// getOrCreate a cluster cache
-func (s *clusterCache) getOrCreate(key string) *cachedCluster {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	instance, ok := s.clusterMap[key]
-	if !ok {
-		s.clusterMap[key] = &cachedCluster{}
-	}
-	return instance
-}
-
 // set a cluster cache
-func (s *clusterCache) set(key string, cluster *cachedCluster) {
+func (s *clusterCache) set(key string, cluster eosv1.EosCluster) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clusterMap[key] = cluster
