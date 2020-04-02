@@ -1,0 +1,10 @@
+apiVersion: eos.exampel.org/v1
+kind: EosCluster
+metadata:
+  name: eoscluster-host-projects
+spec:
+  # Add fields here
+  host: https://172.16.118.126:6443
+  projcets:
+    - p1
+    - p2

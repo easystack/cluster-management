@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -65,6 +66,9 @@ func (k *KService) GetClusterInfo(ctx context.Context, cluster *eosv1.EosCluster
 }
 
 func (k *KService) AssignClusterToProjects(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+	logger := utils.GetLoggerOrDie(ctx)
+
+	logger.Info("Assign Cluster to Projects", "Assign", projects)
 
 	// create NameSpace
 	k.createNameSpace(ctx, cluster, projects)
@@ -77,8 +81,11 @@ func (k *KService) AssignClusterToProjects(ctx context.Context, cluster *eosv1.E
 }
 
 func (k *KService) UnAssignClusterToProjects(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+	logger := utils.GetLoggerOrDie(ctx)
 
+	logger.Info("UnAssign Cluster from Projects", "UnAssign", projects)
 	// delete NameSpace
+	k.deleteNameSpace(ctx, cluster, projects)
 
 	//create Pod Security Policy
 
@@ -97,8 +104,21 @@ func (k *KService) createNameSpace(ctx context.Context, cluster *eosv1.EosCluste
 			},
 		}
 		_, err := k.Client.CoreV1().Namespaces().Create(ns)
-		if err != nil {
+		if err != nil && !apierrs.IsAlreadyExists(err) {
 			logger.Error(err, "Failed to create namespace")
+			return err
+		}
+	}
+	return nil
+}
+
+func (k *KService) deleteNameSpace(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+	logger := utils.GetLoggerOrDie(ctx)
+
+	for _, p := range projects {
+		err := k.Client.CoreV1().Namespaces().Delete(p, &metav1.DeleteOptions{})
+		if err != nil && !apierrs.IsNotFound(err) {
+			logger.Error(err, "Failed to delete namespace")
 			return err
 		}
 	}

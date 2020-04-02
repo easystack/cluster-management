@@ -22,6 +22,7 @@ import (
 	"github.com/cluster-management/utils"
 	"github.com/go-logr/logr"
 	"github.com/gophercloud/gophercloud"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/util/retry"
 	"reflect"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -73,20 +74,21 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
 	key := req.Namespace + req.Name
 
-	// your logic start here
+	// main logic here
 	var cluster eosv1.EosCluster
 	err := r.client.Get(ctx, req.NamespacedName, &cluster)
-	if err != nil {
+	cached, ok := r.cache.get(key)
+
+	// Delete event
+	if err != nil && apierrs.IsNotFound(err) {
+		logger.Info("Delete Event", "Cluster has been deleted", req.NamespacedName)
+		r.k8sService.UnAssignClusterToProjects(ctx, &cached, cached.Spec.Projects)
+		r.cache.delete(key)
+		return ctrl.Result{}, nil
+	} else if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Delete event
-	if cluster.DeletionTimestamp != nil {
-		r.cache.delete(key)
-		return ctrl.Result{}, nil
-	}
-
-	cached, ok := r.cache.get(key)
 	if !ok {
 		// Add event
 		logger.Info("Add Event", "CRD Spec", cluster)
@@ -115,6 +117,7 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 			logger.Info("Do nothing if projects not change")
 		} else {
 			logger.Info("Update Cluster projects info")
+			r.cache.set(key, cluster)
 			r.updateClusterProjects(ctx, &cluster, cached.Spec.Projects, cluster.Spec.Projects)
 		}
 	}
@@ -148,15 +151,14 @@ func (r *EosClusterReconciler) PollingClusterInfo() error {
 func (r *EosClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *eosv1.EosCluster, k8sService *k8s.KService, osService *openstack.OSService) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
-	logger.Info("!!!!Before Polling", "Before", cluster)
+	logger.Info("Before Polling", "Before", cluster)
 	k8sService.Host = cluster.Spec.Host
 	err := k8sService.GetClusterInfo(ctx, cluster, osService)
 	if err != nil {
 		logger.Error(err, "Failed to get cluster latest info")
 	}
 
-	logger.Info("!!!!After Polling", "After", cluster)
-
+	logger.Info("After Polling", "After", cluster)
 	err = r.updateClusterCRD(ctx, cluster)
 	if err != nil {
 		logger.Error(err, "Failed to update cluster CRD")
@@ -187,6 +189,7 @@ func (r *EosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *EosClusterReconciler) updateClusterProjects(ctx context.Context, cluster *eosv1.EosCluster, cached []string, desired []string) error {
+
 	added := make([]string, 0)
 	removed := make([]string, 0)
 
@@ -202,7 +205,7 @@ func (r *EosClusterReconciler) updateClusterProjects(ctx context.Context, cluste
 			removed = append(removed, p)
 		}
 	}
-	r.k8sService.UnAssignClusterToProjects(ctx, cluster, added)
+	r.k8sService.UnAssignClusterToProjects(ctx, cluster, removed)
 
 	return nil
 }
