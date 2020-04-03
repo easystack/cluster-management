@@ -43,3 +43,8 @@ This project leveraged Kubernetes Operator to help manage multiple EOS clusters
    * Polling: <br>
    ```systemctl stop kubelet``` to imitate nodes NotReady
    ```kubctl get eoscluster eoscluster-host -o yaml ``` to check cluster status was updated as expect.
+   
+   
+## Development
+
+![architecture](pics/eoscluster-management.jpg) 
