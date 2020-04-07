@@ -3,8 +3,8 @@ package k8s
 import (
 	"context"
 	"fmt"
-	"github.com/cluster-management/openstack"
-	"github.com/cluster-management/utils"
+	"github.com/cluster-management/pkg/openstack"
+	"github.com/cluster-management/pkg/utils"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -15,7 +15,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
 
-	eosv1 "github.com/cluster-management/api/v1"
+	eosv1 "github.com/cluster-management/pkg/api/v1"
 )
 
 type KService struct {

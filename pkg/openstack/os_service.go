@@ -2,7 +2,7 @@ package openstack
 
 import (
 	"context"
-	"github.com/cluster-management/utils"
+	"github.com/cluster-management/pkg/utils"
 
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"

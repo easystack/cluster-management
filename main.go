@@ -19,14 +19,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/cluster-management/k8s"
-	osservice "github.com/cluster-management/openstack"
+	"github.com/cluster-management/pkg/k8s"
+	osservice "github.com/cluster-management/pkg/openstack"
 	"github.com/gophercloud/gophercloud/openstack"
 	"golang.org/x/net/context"
 	"os"
 
-	eosv1 "github.com/cluster-management/api/v1"
-	"github.com/cluster-management/controllers"
+	eosv1 "github.com/cluster-management/pkg/api/v1"
+	"github.com/cluster-management/pkg/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"

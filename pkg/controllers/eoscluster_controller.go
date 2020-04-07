@@ -19,7 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"github.com/cluster-management/utils"
+	"github.com/cluster-management/pkg/utils"
 	"github.com/go-logr/logr"
 	"github.com/gophercloud/gophercloud"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -30,9 +30,9 @@ import (
 	"sync"
 	"time"
 
-	eosv1 "github.com/cluster-management/api/v1"
-	"github.com/cluster-management/k8s"
-	"github.com/cluster-management/openstack"
+	eosv1 "github.com/cluster-management/pkg/api/v1"
+	"github.com/cluster-management/pkg/k8s"
+	"github.com/cluster-management/pkg/openstack"
 )
 
 const (

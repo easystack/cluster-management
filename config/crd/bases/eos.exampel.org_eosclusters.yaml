@@ -31,6 +31,25 @@ spec:
           type: object
         spec:
           description: EosClusterSpec defines the desired state of EosCluster
+          properties:
+            architecture:
+              type: string
+            host:
+              description: Host must be a host string, a host:port pair, or a URL
+                to the base of the apiserver.
+              type: string
+            nodes:
+              type: integer
+            projects:
+              items:
+                type: string
+              type: array
+            status:
+              type: string
+            type:
+              type: string
+            version:
+              type: string
           type: object
         status:
           description: EosClusterStatus defines the observed state of EosCluster
