@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	eosv1 "github.com/cluster-management/pkg/api/v1"
+	ecnsv1 "github.com/cluster-management/pkg/api/v1"
 	"github.com/cluster-management/pkg/k8s"
 	"github.com/cluster-management/pkg/openstack"
 )
@@ -41,11 +41,11 @@ const (
 
 type clusterCache struct {
 	mu         sync.Mutex
-	clusterMap map[string]eosv1.EosCluster
+	clusterMap map[string]ecnsv1.Cluster
 }
 
-// EosClusterReconciler reconciles a EosCluster object
-type EosClusterReconciler struct {
+// ClusterReconciler reconciles a Cluster object
+type ClusterReconciler struct {
 	client     cli.Client
 	log        logr.Logger
 	authOpts   *gophercloud.AuthOptions
@@ -54,28 +54,28 @@ type EosClusterReconciler struct {
 	k8sService *k8s.KService
 }
 
-func NewEosClusterReconciler(c cli.Client, logger logr.Logger, opts *gophercloud.AuthOptions, os *openstack.OSService, k8s *k8s.KService) *EosClusterReconciler {
-	return &EosClusterReconciler{
+func NewClusterReconciler(c cli.Client, logger logr.Logger, opts *gophercloud.AuthOptions, os *openstack.OSService, k8s *k8s.KService) *ClusterReconciler {
+	return &ClusterReconciler{
 		client:     c,
 		log:        logger,
 		authOpts:   opts,
-		cache:      &clusterCache{clusterMap: make(map[string]eosv1.EosCluster)},
+		cache:      &clusterCache{clusterMap: make(map[string]ecnsv1.Cluster)},
 		osService:  os,
 		k8sService: k8s,
 	}
 }
 
-// +kubebuilder:rbac:groups=eos.exampel.org,resources=eosclusters,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=eos.exampel.org,resources=eosclusters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ecns.easystack.com,resources=Clusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ecns.easystack.com,resources=Clusters/status,verbs=get;update;patch
 
-func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	rootCtx := context.Background()
 	logger := r.log.WithValues("Reconcile", req.NamespacedName)
 	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
 	key := req.Namespace + req.Name
 
 	// main logic here
-	var cluster eosv1.EosCluster
+	var cluster ecnsv1.Cluster
 	err := r.client.Get(ctx, req.NamespacedName, &cluster)
 	cached, ok := r.cache.get(key)
 
@@ -125,21 +125,21 @@ func (r *EosClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) 
 	return ctrl.Result{}, nil
 }
 
-func (r *EosClusterReconciler) PollingClusterInfo() error {
+func (r *ClusterReconciler) PollingClusterInfo() error {
 	rootCtx := context.Background()
 	logger := r.log.WithName("Polling")
 	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
 
-	var clusterList eosv1.EosClusterList
+	var clusterList ecnsv1.ClusterList
 
 	for {
 		time.Sleep(3 * time.Second)
 		fmt.Println("polling clusters latest info")
 
-		// Get all EOSCluster CRD
+		// Get all Cluster CRD
 		err := r.client.List(ctx, &clusterList)
 		if err != nil {
-			logger.Error(err, "Failed to list EOSClusters")
+			logger.Error(err, "Failed to list Clusters")
 		}
 
 		for i := range clusterList.Items {
@@ -148,7 +148,7 @@ func (r *EosClusterReconciler) PollingClusterInfo() error {
 	}
 }
 
-func (r *EosClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *eosv1.EosCluster, k8sService *k8s.KService, osService *openstack.OSService) error {
+func (r *ClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *ecnsv1.Cluster, k8sService *k8s.KService, osService *openstack.OSService) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	logger.Info("Before Polling", "Before", cluster)
@@ -167,28 +167,28 @@ func (r *EosClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *eo
 	return nil
 }
 
-func (r *EosClusterReconciler) updateClusterCRD(ctx context.Context, cluster *eosv1.EosCluster) error {
+func (r *ClusterReconciler) updateClusterCRD(ctx context.Context, cluster *ecnsv1.Cluster) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := r.client.Update(ctx, cluster); err != nil {
-			logger.Error(err, "Failed to update EOSCluster CRD")
+			logger.Error(err, "Failed to update Cluster CRD")
 			return err
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("failed to update EOSCluster %s: %v", cluster.Name, err)
+		return fmt.Errorf("failed to update Cluster %s: %v", cluster.Name, err)
 	}
 	return nil
 }
 
-func (r *EosClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&eosv1.EosCluster{}).
+		For(&ecnsv1.Cluster{}).
 		Complete(r)
 }
 
-func (r *EosClusterReconciler) updateClusterProjects(ctx context.Context, cluster *eosv1.EosCluster, cached []string, desired []string) error {
+func (r *ClusterReconciler) updateClusterProjects(ctx context.Context, cluster *ecnsv1.Cluster, cached []string, desired []string) error {
 
 	added := make([]string, 0)
 	removed := make([]string, 0)
@@ -211,7 +211,7 @@ func (r *EosClusterReconciler) updateClusterProjects(ctx context.Context, cluste
 }
 
 // get a cached cluster
-func (s *clusterCache) get(key string) (eosv1.EosCluster, bool) {
+func (s *clusterCache) get(key string) (ecnsv1.Cluster, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cluster, ok := s.clusterMap[key]
@@ -219,7 +219,7 @@ func (s *clusterCache) get(key string) (eosv1.EosCluster, bool) {
 }
 
 // set a cluster cache
-func (s *clusterCache) set(key string, cluster eosv1.EosCluster) {
+func (s *clusterCache) set(key string, cluster ecnsv1.Cluster) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clusterMap[key] = cluster

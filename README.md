@@ -1,8 +1,8 @@
 # cluster-management
 
-This project leveraged Kubernetes Operator to help manage multiple EOS clusters
+This project leveraged Kubernetes Operator to help manage multiple ecns clusters
 
-- CRD "eoscluster" to store Cluster Info
+- CRD "Cluster" to store Cluster Info
 - Controller
   - Polling latest cluster info to update CRD 
   - create/delete namespaces, network policy, pod security policy
@@ -27,24 +27,24 @@ This project leveraged Kubernetes Operator to help manage multiple EOS clusters
 - Function Demo
 
   * Create: <br>
-  ```kubectl apply -f config/samples/eoscluster_with_host.yaml``` to create eoscluster without projects <br>
-  ```kubectl apply -f config/samples/eoscluster_with_host.yaml``` to create eoscluster with projects
+  ```kubectl apply -f config/samples/cluster_with_host.yaml``` to create cluster without projects <br>
+  ```kubectl apply -f config/samples/cluster_with_host.yaml``` to create cluster with projects
   
   * Update: <br>
-  ```kubectl edit eoscluster eoscluster-host``` to update projects list
+  ```kubectl edit cluster cluster-host``` to update projects list
   
   * Delete: <br>
-  ```kubectl delete eoscluster eoscluster-host``` to delete eoscluster
+  ```kubectl delete cluster cluster-host``` to delete cluster
   
    ***Notes***:
-   ```kubctl get eoscluster eoscluster-host -o yaml ``` to check cluster info was updated as expect.
+   ```kubctl get cluster cluster-host -o yaml ``` to check cluster info was updated as expect.
    Log into managed clusters to check the namespaces(same name with projects) were created/deleted as expect.
    
    * Polling: <br>
    ```systemctl stop kubelet``` to imitate nodes NotReady
-   ```kubctl get eoscluster eoscluster-host -o yaml ``` to check cluster status was updated as expect.
+   ```kubctl get cluster cluster-host -o yaml ``` to check cluster status was updated as expect.
    
    
 ## Development
 
-![architecture](pics/eoscluster-management.jpg) 
+![architecture](pics/cluster-management.jpg) 

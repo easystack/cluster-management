@@ -23,8 +23,8 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// EosClusterSpec defines the desired state of EosCluster
-type EosClusterSpec struct {
+// ClusterSpec defines the desired state of Cluster
+type ClusterSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
@@ -38,32 +38,32 @@ type EosClusterSpec struct {
 	Projects     []string `json:"projects,omitempty"`
 }
 
-// EosClusterStatus defines the observed state of EosCluster
-type EosClusterStatus struct {
+// ClusterStatus defines the observed state of Cluster
+type ClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 }
 
 // +kubebuilder:object:root=true
 
-// EosCluster is the Schema for the eosclusters API
-type EosCluster struct {
+// Cluster is the Schema for the clusters API
+type Cluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   EosClusterSpec   `json:"spec,omitempty"`
-	Status EosClusterStatus `json:"status,omitempty"`
+	Spec   ClusterSpec   `json:"spec,omitempty"`
+	Status ClusterStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// EosClusterList contains a list of EosCluster
-type EosClusterList struct {
+// ClusterList contains a list of Cluster
+type ClusterList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []EosCluster `json:"items"`
+	Items           []Cluster `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&EosCluster{}, &EosClusterList{})
+	SchemeBuilder.Register(&Cluster{}, &ClusterList{})
 }

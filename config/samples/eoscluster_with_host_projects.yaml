@@ -1,10 +1,10 @@
-apiVersion: eos.exampel.org/v1
-kind: EosCluster
+apiVersion: ecns.easystack.com/v1
+kind: Cluster
 metadata:
-  name: eoscluster-host-projects
+  name: cluster-host-projects
 spec:
   # Add fields here
   host: https://172.16.118.126:6443
-  projcets:
+  projects:
     - p1
     - p2

@@ -1,7 +1,7 @@
 version: "2"
-domain: exampel.org
+domain: easystack.com
 repo: github.com/cluster-management
 resources:
-- group: eos
+- group: ecns
   version: v1
-  kind: EosCluster
+  kind: Cluster

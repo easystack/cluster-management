@@ -7,9 +7,9 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - eos.exampel.org
+  - ecns.easystack.com
   resources:
-  - eosclusters
+  - Clusters
   verbs:
   - create
   - delete
@@ -19,9 +19,9 @@ rules:
   - update
   - watch
 - apiGroups:
-  - eos.exampel.org
+  - ecns.easystack.com
   resources:
-  - eosclusters/status
+  - Clusters/status
   verbs:
   - get
   - patch

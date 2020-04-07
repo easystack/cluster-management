@@ -15,7 +15,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
 
-	eosv1 "github.com/cluster-management/pkg/api/v1"
+	ecnsv1 "github.com/cluster-management/pkg/api/v1"
 )
 
 type KService struct {
@@ -42,7 +42,7 @@ func (k *KService) NewK8sClient(ctx context.Context) (*kubernetes.Clientset, err
 	return cs, nil
 }
 
-func (k *KService) GetClusterInfo(ctx context.Context, cluster *eosv1.EosCluster, osService *openstack.OSService) error {
+func (k *KService) GetClusterInfo(ctx context.Context, cluster *ecnsv1.Cluster, osService *openstack.OSService) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	if k.Token == nil || k.Token.ExpiresAt.Before(time.Now()) {
@@ -65,7 +65,7 @@ func (k *KService) GetClusterInfo(ctx context.Context, cluster *eosv1.EosCluster
 	return k.generateNewCluster(ctx, cluster, nodes)
 }
 
-func (k *KService) AssignClusterToProjects(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+func (k *KService) AssignClusterToProjects(ctx context.Context, cluster *ecnsv1.Cluster, projects []string) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	logger.Info("Assign Cluster to Projects", "Assign", projects)
@@ -80,7 +80,7 @@ func (k *KService) AssignClusterToProjects(ctx context.Context, cluster *eosv1.E
 	return nil
 }
 
-func (k *KService) UnAssignClusterToProjects(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+func (k *KService) UnAssignClusterToProjects(ctx context.Context, cluster *ecnsv1.Cluster, projects []string) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	logger.Info("UnAssign Cluster from Projects", "UnAssign", projects)
@@ -94,7 +94,7 @@ func (k *KService) UnAssignClusterToProjects(ctx context.Context, cluster *eosv1
 	return nil
 }
 
-func (k *KService) createNameSpace(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+func (k *KService) createNameSpace(ctx context.Context, cluster *ecnsv1.Cluster, projects []string) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	for _, p := range projects {
@@ -112,7 +112,7 @@ func (k *KService) createNameSpace(ctx context.Context, cluster *eosv1.EosCluste
 	return nil
 }
 
-func (k *KService) deleteNameSpace(ctx context.Context, cluster *eosv1.EosCluster, projects []string) error {
+func (k *KService) deleteNameSpace(ctx context.Context, cluster *ecnsv1.Cluster, projects []string) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	for _, p := range projects {
@@ -126,7 +126,7 @@ func (k *KService) deleteNameSpace(ctx context.Context, cluster *eosv1.EosCluste
 	return nil
 }
 
-func (k *KService) generateNewCluster(ctx context.Context, cluster *eosv1.EosCluster, nodes *v1.NodeList) error {
+func (k *KService) generateNewCluster(ctx context.Context, cluster *ecnsv1.Cluster, nodes *v1.NodeList) error {
 	var node1 = nodes.Items[0]
 	var status = "Ready"
 
@@ -134,7 +134,7 @@ func (k *KService) generateNewCluster(ctx context.Context, cluster *eosv1.EosClu
 		status = "NotReady"
 	}
 
-	var clusterSpec = eosv1.EosClusterSpec{
+	var clusterSpec = ecnsv1.ClusterSpec{
 		Host:         cluster.Spec.Host,
 		Nodes:        len(nodes.Items),
 		Version:      node1.Status.NodeInfo.KubeletVersion,

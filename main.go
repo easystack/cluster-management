@@ -25,7 +25,7 @@ import (
 	"golang.org/x/net/context"
 	"os"
 
-	eosv1 "github.com/cluster-management/pkg/api/v1"
+	ecnsv1 "github.com/cluster-management/pkg/api/v1"
 	"github.com/cluster-management/pkg/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -44,7 +44,7 @@ var (
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 
-	_ = eosv1.AddToScheme(scheme)
+	_ = ecnsv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -94,14 +94,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	rc := controllers.NewEosClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("EosCluster"), &opts, &osClient, &k8sReconcile)
+	rc := controllers.NewClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("Cluster"), &opts, &osClient, &k8sReconcile)
 
-	polling := controllers.NewEosClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("EosCluster"), &opts, &osClient, &k8sPolling)
+	polling := controllers.NewClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("Cluster"), &opts, &osClient, &k8sPolling)
 	go polling.PollingClusterInfo()
 
 	err = rc.SetupWithManager(mgr)
 	if err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "EosCluster")
+		setupLog.Error(err, "unable to create controller", "controller", "Cluster")
 		os.Exit(1)
 	}
 
