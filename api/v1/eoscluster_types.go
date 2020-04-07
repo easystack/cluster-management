@@ -35,7 +35,7 @@ type EosClusterSpec struct {
 	Architecture string   `json:"architecture,omitempty"`
 	Status       string   `json:"status,omitempty"`
 	Type         string   `json:"type,omitempty"`
-	Projects     []string `json:"projects"`
+	Projects     []string `json:"projects,omitempty"`
 }
 
 // EosClusterStatus defines the observed state of EosCluster
