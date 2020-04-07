@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/cluster-management/pkg/openstack"
 	"github.com/cluster-management/pkg/utils"
+	"sync"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -19,12 +20,57 @@ import (
 )
 
 type KService struct {
-	Host   string
-	Token  *tokens.Token
-	Client *kubernetes.Clientset
+	Host     string
+	Token    *tokens.Token
+	OSClient *openstack.OSService
+	Cache    *clientCache
 }
 
-func (k *KService) NewK8sClient(ctx context.Context) (*kubernetes.Clientset, error) {
+type clientCache struct {
+	mu        sync.Mutex
+	clientMap map[string]*kubernetes.Clientset
+}
+
+func (k *KService) GetClusterInfo(ctx context.Context, cluster *ecnsv1.Cluster) error {
+	logger := utils.GetLoggerOrDie(ctx)
+
+	client, _ := k.getK8sClient(ctx, cluster)
+	nodes, err := client.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		logger.Error(err, "Failed to get nodes")
+		return err
+	}
+
+	return k.generateNewCluster(ctx, cluster, nodes)
+}
+
+// ensure get correct k8s client very time because that cluster host maybe change every time
+func (k *KService) getK8sClient(ctx context.Context, cluster *ecnsv1.Cluster) (*kubernetes.Clientset, error) {
+	logger := utils.GetLoggerOrDie(ctx)
+
+	if k.Cache == nil {
+		logger.Info("Init cache for k8s clients")
+		k.Cache = &clientCache{clientMap: make(map[string]*kubernetes.Clientset)}
+	}
+
+	key := cluster.Spec.Host
+	cs, ok := k.Cache.get(key)
+	if k.Token == nil || k.Token.ExpiresAt.Before(time.Now()) {
+		logger.Info("Token is nil or is expired, need to renew")
+		token, _ := k.OSClient.GetKeystoneToken(ctx)
+		k.Token = token
+		cs, _ := k.newK8sClient(ctx, cluster)
+		k.Cache.set(key, cs)
+	} else if !ok {
+		logger.Info("GetClusterInfo: no k8s client, need to create new one")
+		cs, _ = k.newK8sClient(ctx, cluster)
+		k.Cache.set(key, cs)
+	}
+
+	return cs, nil
+}
+
+func (k *KService) newK8sClient(ctx context.Context, cluster *ecnsv1.Cluster) (*kubernetes.Clientset, error) {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	config := rest.Config{
@@ -40,29 +86,6 @@ func (k *KService) NewK8sClient(ctx context.Context) (*kubernetes.Clientset, err
 		return nil, err
 	}
 	return cs, nil
-}
-
-func (k *KService) GetClusterInfo(ctx context.Context, cluster *ecnsv1.Cluster, osService *openstack.OSService) error {
-	logger := utils.GetLoggerOrDie(ctx)
-
-	if k.Token == nil || k.Token.ExpiresAt.Before(time.Now()) {
-		logger.Info("Token is nil or is expired, need to renew")
-		token, _ := osService.GetKeystoneToken(ctx)
-		k.Token = token
-	}
-
-	if k.Client == nil {
-		logger.Info("GetClusterInfo: no k8s client, need to create new one")
-		k.Client, _ = k.NewK8sClient(ctx)
-	}
-
-	nodes, err := k.Client.CoreV1().Nodes().List(metav1.ListOptions{})
-	if err != nil {
-		logger.Error(err, "Failed to get nodes")
-		return err
-	}
-
-	return k.generateNewCluster(ctx, cluster, nodes)
 }
 
 func (k *KService) AssignClusterToProjects(ctx context.Context, cluster *ecnsv1.Cluster, projects []string) error {
@@ -97,13 +120,14 @@ func (k *KService) UnAssignClusterToProjects(ctx context.Context, cluster *ecnsv
 func (k *KService) createNameSpace(ctx context.Context, cluster *ecnsv1.Cluster, projects []string) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
+	client, _ := k.getK8sClient(ctx, cluster)
 	for _, p := range projects {
 		ns := &v1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: p,
 			},
 		}
-		_, err := k.Client.CoreV1().Namespaces().Create(ns)
+		_, err := client.CoreV1().Namespaces().Create(ns)
 		if err != nil && !apierrs.IsAlreadyExists(err) {
 			logger.Error(err, "Failed to create namespace")
 			return err
@@ -115,8 +139,9 @@ func (k *KService) createNameSpace(ctx context.Context, cluster *ecnsv1.Cluster,
 func (k *KService) deleteNameSpace(ctx context.Context, cluster *ecnsv1.Cluster, projects []string) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
+	client, _ := k.getK8sClient(ctx, cluster)
 	for _, p := range projects {
-		err := k.Client.CoreV1().Namespaces().Delete(p, &metav1.DeleteOptions{})
+		err := client.CoreV1().Namespaces().Delete(p, &metav1.DeleteOptions{})
 		if err != nil && !apierrs.IsNotFound(err) {
 			logger.Error(err, "Failed to delete namespace")
 			return err
@@ -172,4 +197,26 @@ func (k *KService) getNodeStatus(node *v1.Node) (bool, error) {
 	}
 
 	return false, fmt.Errorf("failed to get node Ready status")
+}
+
+// get a cached client
+func (s *clientCache) get(key string) (*kubernetes.Clientset, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cluster, ok := s.clientMap[key]
+	return cluster, ok
+}
+
+// set a client cache
+func (s *clientCache) set(key string, client *kubernetes.Clientset) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clientMap[key] = client
+}
+
+// delete a cached client
+func (s *clientCache) delete(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clientMap, key)
 }

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"github.com/cluster-management/pkg/utils"
 	"github.com/go-logr/logr"
-	"github.com/gophercloud/gophercloud"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/util/retry"
 	"reflect"
@@ -32,7 +31,6 @@ import (
 
 	ecnsv1 "github.com/cluster-management/pkg/api/v1"
 	"github.com/cluster-management/pkg/k8s"
-	"github.com/cluster-management/pkg/openstack"
 )
 
 const (
@@ -48,20 +46,18 @@ type clusterCache struct {
 type ClusterReconciler struct {
 	client     cli.Client
 	log        logr.Logger
-	authOpts   *gophercloud.AuthOptions
 	cache      *clusterCache
-	osService  *openstack.OSService
 	k8sService *k8s.KService
+	pollingPeriod int
 }
 
-func NewClusterReconciler(c cli.Client, logger logr.Logger, opts *gophercloud.AuthOptions, os *openstack.OSService, k8s *k8s.KService) *ClusterReconciler {
+func NewClusterReconciler(c cli.Client, logger logr.Logger, k8s *k8s.KService, period int) *ClusterReconciler {
 	return &ClusterReconciler{
 		client:     c,
 		log:        logger,
-		authOpts:   opts,
 		cache:      &clusterCache{clusterMap: make(map[string]ecnsv1.Cluster)},
-		osService:  os,
 		k8sService: k8s,
+		pollingPeriod: period,
 	}
 }
 
@@ -93,7 +89,7 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		// Add event
 		logger.Info("Add Event", "CRD Spec", cluster)
 		r.k8sService.Host = cluster.Spec.Host
-		err = r.k8sService.GetClusterInfo(ctx, &cluster, r.osService)
+		err = r.k8sService.GetClusterInfo(ctx, &cluster)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -133,7 +129,7 @@ func (r *ClusterReconciler) PollingClusterInfo() error {
 	var clusterList ecnsv1.ClusterList
 
 	for {
-		time.Sleep(3 * time.Second)
+		time.Sleep(time.Duration(r.pollingPeriod) * time.Second)
 		fmt.Println("polling clusters latest info")
 
 		// Get all Cluster CRD
@@ -143,17 +139,17 @@ func (r *ClusterReconciler) PollingClusterInfo() error {
 		}
 
 		for i := range clusterList.Items {
-			r.pollingAndUpdate(ctx, &clusterList.Items[i], r.k8sService, r.osService)
+			r.pollingAndUpdate(ctx, &clusterList.Items[i], r.k8sService)
 		}
 	}
 }
 
-func (r *ClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *ecnsv1.Cluster, k8sService *k8s.KService, osService *openstack.OSService) error {
+func (r *ClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *ecnsv1.Cluster, k8sService *k8s.KService) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	logger.Info("Before Polling", "Before", cluster)
 	k8sService.Host = cluster.Spec.Host
-	err := k8sService.GetClusterInfo(ctx, cluster, osService)
+	err := k8sService.GetClusterInfo(ctx, cluster)
 	if err != nil {
 		logger.Error(err, "Failed to get cluster latest info")
 	}
