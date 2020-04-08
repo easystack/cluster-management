@@ -44,19 +44,19 @@ type clusterCache struct {
 
 // ClusterReconciler reconciles a Cluster object
 type ClusterReconciler struct {
-	client     cli.Client
-	log        logr.Logger
-	cache      *clusterCache
-	k8sService *k8s.KService
+	client        cli.Client
+	log           logr.Logger
+	cache         *clusterCache
+	k8sService    *k8s.KService
 	pollingPeriod int
 }
 
 func NewClusterReconciler(c cli.Client, logger logr.Logger, k8s *k8s.KService, period int) *ClusterReconciler {
 	return &ClusterReconciler{
-		client:     c,
-		log:        logger,
-		cache:      &clusterCache{clusterMap: make(map[string]ecnsv1.Cluster)},
-		k8sService: k8s,
+		client:        c,
+		log:           logger,
+		cache:         &clusterCache{clusterMap: make(map[string]ecnsv1.Cluster)},
+		k8sService:    k8s,
 		pollingPeriod: period,
 	}
 }

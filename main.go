@@ -59,15 +59,6 @@ func main() {
 
 	ctrl.SetLogger(zap.Logger(true))
 
-	// set env for test
-	os.Setenv("OS_AUTH_URL", "http://keystone-api.openstack.svc.cluster.local/v3")
-	os.Setenv("OS_PROJECT_NAME", "admin")
-	os.Setenv("OS_PROJECT_DOMAIN_NAME", "Default")
-	os.Setenv("OS_USER_DOMAIN_NAME", "Default")
-	os.Setenv("OS_DOMAIN_NAME", "Default")
-	os.Setenv("OS_USERNAME", "admin")
-	os.Setenv("OS_PASSWORD", "Admin@ES20!8")
-
 	// get ECS cloud admin credential info from env
 	opts, err := openstack.AuthOptionsFromEnv()
 	if err != nil {
