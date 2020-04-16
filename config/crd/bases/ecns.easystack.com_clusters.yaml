@@ -34,6 +34,8 @@ spec:
           properties:
             architecture:
               type: string
+            clusterid:
+              type: string
             host:
               description: Host must be a host string, a host:port pair, or a URL
                 to the base of the apiserver.

@@ -35,6 +35,7 @@ type ClusterSpec struct {
 	Architecture string   `json:"architecture,omitempty"`
 	Status       string   `json:"status,omitempty"`
 	Type         string   `json:"type,omitempty"`
+	ClusterID    string   `json:"clusterid,omitempty"`
 	Projects     []string `json:"projects,omitempty"`
 }
 

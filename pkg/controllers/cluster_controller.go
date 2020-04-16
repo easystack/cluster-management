@@ -19,22 +19,28 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"github.com/cluster-management/pkg/utils"
-	"github.com/go-logr/logr"
-	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/util/retry"
 	"reflect"
-	ctrl "sigs.k8s.io/controller-runtime"
-	cli "sigs.k8s.io/controller-runtime/pkg/client"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/util/retry"
+
+	ctrl "sigs.k8s.io/controller-runtime"
+	cli "sigs.k8s.io/controller-runtime/pkg/client"
+
 	ecnsv1 "github.com/cluster-management/pkg/api/v1"
 	"github.com/cluster-management/pkg/k8s"
+	"github.com/cluster-management/pkg/utils"
 )
 
 const (
-	loggerCtxKey = "logger"
+	loggerCtxKey            = "logger"
+	clusterTypeEks          = "EKS"
+	eksClusterDeleted       = "DELETE_COMPLETE"
+	errorEksClusterNotFound = "Resource not found"
 )
 
 type clusterCache struct {
@@ -88,6 +94,13 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	if !ok {
 		// Add event
 		logger.Info("Add Event", "CRD Spec", cluster)
+		if cluster.Spec.Type == clusterTypeEks {
+			ok, _ := r.checkAndUpdateEksCluster(ctx, &cluster, r.k8sService)
+			if !ok {
+				logger.Info("Check Eks cluster status", "ClusterID", cluster.Spec.ClusterID, "Status", cluster.Spec.Status)
+				return ctrl.Result{}, nil
+			}
+		}
 		r.k8sService.Host = cluster.Spec.Host
 		err = r.k8sService.GetClusterInfo(ctx, &cluster)
 		if err != nil {
@@ -147,6 +160,13 @@ func (r *ClusterReconciler) PollingClusterInfo() error {
 func (r *ClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *ecnsv1.Cluster, k8sService *k8s.KService) error {
 	logger := utils.GetLoggerOrDie(ctx)
 
+	if cluster.Spec.Type == clusterTypeEks {
+		ok, _ := r.checkAndUpdateEksCluster(ctx, cluster, k8sService)
+		if !ok {
+			logger.Info("Check Eks cluster status", "ClusterID", cluster.Spec.ClusterID, "Status", cluster.Spec.Status)
+			return nil
+		}
+	}
 	logger.Info("Before Polling", "Before", cluster)
 	k8sService.Host = cluster.Spec.Host
 	err := k8sService.GetClusterInfo(ctx, cluster)
@@ -161,6 +181,34 @@ func (r *ClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *ecnsv
 	}
 
 	return nil
+}
+
+func (r *ClusterReconciler) checkAndUpdateEksCluster(ctx context.Context, cluster *ecnsv1.Cluster, k8sService *k8s.KService) (bool, error) {
+	logger := utils.GetLoggerOrDie(ctx)
+	osClient := k8sService.OSClient
+	check := false
+	status, apiAddr, err := osClient.GetMagnumClusterStatus(ctx, cluster.Spec.ClusterID)
+	if err != nil {
+		if err.Error() != errorEksClusterNotFound {
+			return false, err
+		}
+		status = eksClusterDeleted
+	}
+
+	cluster.Spec.Status = status
+	if strings.HasSuffix(status, "COMPLETE") {
+		if status != eksClusterDeleted {
+			cluster.Spec.Host = apiAddr
+			check = true
+		}
+	}
+
+	err = r.updateClusterCRD(ctx, cluster)
+	if err != nil {
+		logger.Error(err, "Failed to update cluster CRD")
+	}
+
+	return check, nil
 }
 
 func (r *ClusterReconciler) updateClusterCRD(ctx context.Context, cluster *ecnsv1.Cluster) error {

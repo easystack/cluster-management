@@ -165,6 +165,7 @@ func (k *KService) generateNewCluster(ctx context.Context, cluster *ecnsv1.Clust
 		Version:      node1.Status.NodeInfo.KubeletVersion,
 		Architecture: node1.Status.NodeInfo.Architecture,
 		Status:       status,
+		ClusterID:    cluster.Spec.ClusterID,
 		Projects:     cluster.Spec.Projects,
 	}
 
