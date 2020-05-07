@@ -191,8 +191,16 @@ func (r *ClusterReconciler) checkAndUpdateEksCluster(ctx context.Context, cluste
 	if err != nil {
 		if err.Error() != errorEksClusterNotFound {
 			return false, err
+		} else {
+			// if eks cluster has been deleted, then delete the releated cr resource
+			logger.Info("Try to delete eks cr resource", "ClusterName", cluster.Name, "EKSClusterId", cluster.Spec.ClusterID)
+			err := r.client.Delete(ctx, cluster)
+			if err != nil {
+				logger.Error(err, "Failed to delete eks cr resource", "ClusterName", cluster.Name, "EKSClusterId", cluster.Spec.ClusterID)
+				return false, err
+			}
+			return false, nil
 		}
-		status = eksClusterDeleted
 	}
 
 	cluster.Spec.Status = status
