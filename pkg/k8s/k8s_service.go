@@ -3,8 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
-	"github.com/cluster-management/pkg/openstack"
-	"github.com/cluster-management/pkg/utils"
+	"reflect"
 	"sync"
 	"time"
 
@@ -14,6 +13,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/cluster-management/pkg/openstack"
+	"github.com/cluster-management/pkg/utils"
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
 
 	ecnsv1 "github.com/cluster-management/pkg/api/v1"
@@ -31,17 +32,24 @@ type clientCache struct {
 	clientMap map[string]*kubernetes.Clientset
 }
 
-func (k *KService) GetClusterInfo(ctx context.Context, cluster *ecnsv1.Cluster) error {
+func (k *KService) CheckClusterInfo(ctx context.Context, cluster *ecnsv1.Cluster) (bool, error) {
 	logger := utils.GetLoggerOrDie(ctx)
 
 	client, _ := k.getK8sClient(ctx, cluster)
 	nodes, err := client.CoreV1().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		logger.Error(err, "Failed to get nodes")
-		return err
+		return false, err
 	}
 
-	return k.generateNewCluster(ctx, cluster, nodes)
+	newClusterSpec := k.generateNewClusterSpec(cluster, nodes)
+
+	if reflect.DeepEqual(newClusterSpec, cluster.Spec) {
+		return false, nil
+	} else {
+		cluster.Spec = newClusterSpec
+		return true, nil
+	}
 }
 
 // ensure get correct k8s client very time because that cluster host maybe change every time
@@ -94,7 +102,9 @@ func (k *KService) AssignClusterToProjects(ctx context.Context, cluster *ecnsv1.
 	logger.Info("Assign Cluster to Projects", "Assign", projects)
 
 	// create NameSpace
-	k.createNameSpace(ctx, cluster, projects)
+	if err := k.createNameSpace(ctx, cluster, projects); err != nil {
+		return err
+	}
 
 	//create Pod Security Policy
 
@@ -108,7 +118,9 @@ func (k *KService) UnAssignClusterToProjects(ctx context.Context, cluster *ecnsv
 
 	logger.Info("UnAssign Cluster from Projects", "UnAssign", projects)
 	// delete NameSpace
-	k.deleteNameSpace(ctx, cluster, projects)
+	if err := k.deleteNameSpace(ctx, cluster, projects); err != nil {
+		return err
+	}
 
 	//create Pod Security Policy
 
@@ -151,7 +163,7 @@ func (k *KService) deleteNameSpace(ctx context.Context, cluster *ecnsv1.Cluster,
 	return nil
 }
 
-func (k *KService) generateNewCluster(ctx context.Context, cluster *ecnsv1.Cluster, nodes *v1.NodeList) error {
+func (k *KService) generateNewClusterSpec(cluster *ecnsv1.Cluster, nodes *v1.NodeList) ecnsv1.ClusterSpec {
 	var node1 = nodes.Items[0]
 	var status = "Ready"
 
@@ -168,11 +180,10 @@ func (k *KService) generateNewCluster(ctx context.Context, cluster *ecnsv1.Clust
 		ClusterID:    cluster.Spec.ClusterID,
 		Projects:     cluster.Spec.Projects,
 		Type:         cluster.Spec.Type,
+		Eks:          cluster.Spec.Eks,
 	}
 
-	cluster.Spec = clusterSpec
-
-	return nil
+	return clusterSpec
 }
 
 func (k *KService) calculateClusterStatus(nodes *v1.NodeList) bool {

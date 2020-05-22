@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/util/retry"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -37,9 +36,12 @@ import (
 )
 
 const (
-	loggerCtxKey            = "logger"
+	loggerCtxKey = "logger"
+)
+
+const (
+	eksDeleteComplete       = "DELETE_COMPLETE"
 	clusterTypeEks          = "EKS"
-	eksClusterDeleted       = "DELETE_COMPLETE"
 	errorEksClusterNotFound = "Resource not found"
 )
 
@@ -78,44 +80,70 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	// main logic here
 	var cluster ecnsv1.Cluster
-	err := r.client.Get(ctx, req.NamespacedName, &cluster)
+	if err := r.client.Get(ctx, req.NamespacedName, &cluster); err != nil {
+		logger.Error(err, "unable to fetch Cluster", "The Cluster Key is", key)
+		// we'll ignore not-found errors, since they can't be fixed by an immediate
+		// requeue (we'll need to wait for a new notification), and we can get them
+		// on deleted requests.
+		return ctrl.Result{}, cli.IgnoreNotFound(err)
+	}
 	cached, ok := r.cache.get(key)
 
-	// Delete event
-	if err != nil && apierrs.IsNotFound(err) {
-		logger.Info("Delete Event", "Cluster has been deleted", req.NamespacedName)
-		r.k8sService.UnAssignClusterToProjects(ctx, &cached, cached.Spec.Projects)
-		r.cache.delete(key)
+	// name of our custom finalizer
+	myFinalizerName := "cluster-management.namespaceresources.finalizers"
+
+	// examine DeletionTimestamp to determine if object is under deletion
+	if cluster.ObjectMeta.DeletionTimestamp.IsZero() {
+		// The object is not being deleted, so if it does not have our finalizer,
+		// then lets add the finalizer and update the object. This is equivalent
+		// registering our finalizer.
+		if !containsString(cluster.ObjectMeta.Finalizers, myFinalizerName) && cluster.Spec.Type != clusterTypeEks {
+			cluster.ObjectMeta.Finalizers = append(cluster.ObjectMeta.Finalizers, myFinalizerName)
+			if err := r.client.Update(ctx, &cluster); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		// The object is being deleted
+		// do not clean up resources in eks before delete cr, because eks cluster has been deleted
+		if containsString(cluster.ObjectMeta.Finalizers, myFinalizerName) && cluster.Spec.Type != clusterTypeEks {
+			// our finalizer is present, so lets handle any external dependency
+			if err := r.deleteExternalResources(&cluster, ctx); err != nil {
+				// if fail to delete the external dependency here, return with error
+				// so that it can be retried
+				return ctrl.Result{}, err
+			}
+
+			// remove our finalizer from the list and update it.
+			cluster.ObjectMeta.Finalizers = removeString(cluster.ObjectMeta.Finalizers, myFinalizerName)
+			if err := r.client.Update(ctx, &cluster); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		// Stop reconciliation as the item is being deleted
 		return ctrl.Result{}, nil
-	} else if err != nil {
-		return ctrl.Result{}, err
 	}
 
 	if !ok {
 		// Add event
+		// Reconcile filling information can be done in polling action, so we will not do
+		// filling in add event, this can avoid race condition in cr resource
 		logger.Info("Add Event", "CRD Spec", cluster)
 		if cluster.Spec.Type == clusterTypeEks {
-			ok, _ := r.checkAndUpdateEksCluster(ctx, &cluster, r.k8sService)
-			if !ok {
-				logger.Info("Check Eks cluster status", "ClusterID", cluster.Spec.ClusterID, "Status", cluster.Spec.Status)
-				return ctrl.Result{}, nil
+			if !strings.HasSuffix(cluster.Spec.Eks.EksStatus, "COMPLETE") || cluster.Spec.Host == "" {
+				logger.Info("Check Eks Cluster Status", "ClusterID", cluster.Spec.ClusterID, "Status", cluster.Spec.Status)
+				return ctrl.Result{Requeue: true}, nil
 			}
 		}
+
 		r.k8sService.Host = cluster.Spec.Host
-		err = r.k8sService.GetClusterInfo(ctx, &cluster)
-		if err != nil {
+
+		logger.Info("Add Event", "Assign Namespace Resources To Cluster", key)
+		if err := r.k8sService.AssignClusterToProjects(ctx, &cluster, cluster.Spec.Projects); err != nil {
 			return ctrl.Result{}, err
 		}
-		logger.Info("Add Event", "Latest Info", cluster)
-
+		// Last we set this to cache when all action succeed
 		r.cache.set(key, cluster)
-
-		r.k8sService.AssignClusterToProjects(ctx, &cluster, cluster.Spec.Projects)
-
-		err = r.updateClusterCRD(ctx, &cluster)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
 
 	} else {
 		// Update event
@@ -127,7 +155,10 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		} else {
 			logger.Info("Update Cluster projects info")
 			r.cache.set(key, cluster)
-			r.updateClusterProjects(ctx, &cluster, cached.Spec.Projects, cluster.Spec.Projects)
+
+			if err := r.updateClusterProjects(ctx, &cluster, cached.Spec.Projects, cluster.Spec.Projects); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
@@ -143,7 +174,6 @@ func (r *ClusterReconciler) PollingClusterInfo() error {
 
 	for {
 		time.Sleep(time.Duration(r.pollingPeriod) * time.Second)
-		fmt.Println("polling clusters latest info")
 
 		// Get all Cluster CRD
 		err := r.client.List(ctx, &clusterList)
@@ -152,7 +182,9 @@ func (r *ClusterReconciler) PollingClusterInfo() error {
 		}
 
 		for i := range clusterList.Items {
-			r.pollingAndUpdate(ctx, &clusterList.Items[i], r.k8sService)
+			if err := r.pollingAndUpdate(ctx, &clusterList.Items[i], r.k8sService); err != nil {
+				logger.Error(err, "Failed to pollingAndUpdate cluster", "The Cluster is", &clusterList.Items[i])
+			}
 		}
 	}
 }
@@ -163,23 +195,25 @@ func (r *ClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *ecnsv
 	if cluster.Spec.Type == clusterTypeEks {
 		ok, _ := r.checkAndUpdateEksCluster(ctx, cluster, k8sService)
 		if !ok {
-			logger.Info("Check Eks cluster status", "ClusterID", cluster.Spec.ClusterID, "Status", cluster.Spec.Status)
+			logger.Info("Check Eks Until In Complete Status", "ClusterID", cluster.Spec.ClusterID, "Status", cluster.Spec.Eks.EksStatus)
 			return nil
 		}
 	}
-	logger.Info("Before Polling", "Before", cluster)
 	k8sService.Host = cluster.Spec.Host
-	err := k8sService.GetClusterInfo(ctx, cluster)
+
+	whetherUpdate, err := k8sService.CheckClusterInfo(ctx, cluster)
 	if err != nil {
-		logger.Error(err, "Failed to get cluster latest info")
+		logger.Error(err, "Failed to check cluster latest info")
+		return err
 	}
 
-	logger.Info("After Polling", "After", cluster)
-	err = r.updateClusterCRD(ctx, cluster)
-	if err != nil {
-		logger.Error(err, "Failed to update cluster CRD")
+	if whetherUpdate {
+		logger.Info("After Polling", "After", cluster)
+		err = r.updateClusterCRD(ctx, cluster)
+		if err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 
@@ -187,7 +221,8 @@ func (r *ClusterReconciler) checkAndUpdateEksCluster(ctx context.Context, cluste
 	logger := utils.GetLoggerOrDie(ctx)
 	osClient := k8sService.OSClient
 	check := false
-	status, apiAddr, err := osClient.GetMagnumClusterStatus(ctx, cluster.Spec.ClusterID)
+	whetherToUpdate := false
+	eksSpec, err := osClient.GetMagnumClusterStatus(ctx, cluster.Spec.ClusterID)
 	if err != nil {
 		if err.Error() != errorEksClusterNotFound {
 			return false, err
@@ -203,17 +238,29 @@ func (r *ClusterReconciler) checkAndUpdateEksCluster(ctx context.Context, cluste
 		}
 	}
 
-	cluster.Spec.Status = status
-	if strings.HasSuffix(status, "COMPLETE") {
-		if status != eksClusterDeleted {
-			cluster.Spec.Host = apiAddr
+	// when only eks in complete status, can polling eks node status
+	if strings.HasSuffix(eksSpec.EksStatus, "COMPLETE") {
+		if eksSpec.EksStatus != eksDeleteComplete {
 			check = true
+
+			if eksSpec.APIAddress != "" && cluster.Spec.Host != eksSpec.APIAddress {
+				cluster.Spec.Host = eksSpec.APIAddress
+				whetherToUpdate = true
+			}
 		}
 	}
 
-	err = r.updateClusterCRD(ctx, cluster)
-	if err != nil {
-		logger.Error(err, "Failed to update cluster CRD")
+	if !reflect.DeepEqual(cluster.Spec.Eks, eksSpec) {
+		whetherToUpdate = true
+		cluster.Spec.Eks = eksSpec
+	}
+
+	if whetherToUpdate {
+		logger.Info("Update EKS Cr Resource In Polling Step", "The Cluster Detail is", cluster)
+		err := r.updateClusterCRD(ctx, cluster)
+		if err != nil {
+			logger.Error(err, "Failed to update cluster CRD")
+		}
 	}
 
 	return check, nil
@@ -250,14 +297,18 @@ func (r *ClusterReconciler) updateClusterProjects(ctx context.Context, cluster *
 			added = append(added, p)
 		}
 	}
-	r.k8sService.AssignClusterToProjects(ctx, cluster, added)
+	if err := r.k8sService.AssignClusterToProjects(ctx, cluster, added); err != nil {
+		return err
+	}
 
 	for _, p := range cached {
 		if !utils.StringInSlice(p, desired) {
 			removed = append(removed, p)
 		}
 	}
-	r.k8sService.UnAssignClusterToProjects(ctx, cluster, removed)
+	if err := r.k8sService.UnAssignClusterToProjects(ctx, cluster, removed); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -282,4 +333,43 @@ func (s *clusterCache) delete(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.clusterMap, key)
+}
+
+func (r *ClusterReconciler) deleteExternalResources(cluster *ecnsv1.Cluster, ctx context.Context) error {
+	//
+	// delete any external resources associated with the cronJob
+	//
+	// Ensure that delete implementation is idempotent and safe to invoke
+	// multiple types for same object
+	// Delete event
+
+	// if eks cr deleted, no need to unassign because eks cluster has been deleted
+	if cluster.Spec.Type != clusterTypeEks {
+		logger := r.log.WithValues("DeleteExternalResources", "createdNamespaceResources")
+		logger.Info("Begin deleteExternalResources", "The Cluster namespace is", cluster.Spec.Projects)
+		if err := r.k8sService.UnAssignClusterToProjects(ctx, cluster, cluster.Spec.Projects); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Helper functions to check and remove string from a slice of strings.
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+func removeString(slice []string, s string) (result []string) {
+	for _, item := range slice {
+		if item == s {
+			continue
+		}
+		result = append(result, item)
+	}
+	return
 }

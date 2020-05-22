@@ -37,6 +37,14 @@ type ClusterSpec struct {
 	Type         string   `json:"type,omitempty"`
 	ClusterID    string   `json:"clusterid,omitempty"`
 	Projects     []string `json:"projects,omitempty"`
+	Eks          EksSpec  `json:"eks,omitempty"`
+}
+
+type EksSpec struct {
+	EksStatus    string `json:"eksstatus,omitempty"`
+	EksClusterID string `json:"eksclusterid,omitempty"`
+	EksName      string `json:"eksname,omitempty"`
+	APIAddress   string `json:"api_address,omitempty"`
 }
 
 // ClusterStatus defines the observed state of Cluster
