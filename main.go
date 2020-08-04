@@ -54,7 +54,7 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8899", "The address the metric endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
-	pollingPeriod := flag.Int("polling-period", 3, "The address the metric endpoint binds to.")
+	pollingPeriod := flag.Int("polling-period", 3, "The polling loop period.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.Logger(true))
@@ -87,6 +87,7 @@ func main() {
 	}
 
 	rc := controllers.NewClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("Cluster"), &k8sReconcile, *pollingPeriod)
+	rc.MakeSourceReadyBeforeReconcile()
 
 	polling := controllers.NewClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("Cluster"), &k8sPolling, *pollingPeriod)
 	go polling.PollingClusterInfo()

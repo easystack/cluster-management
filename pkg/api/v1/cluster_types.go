@@ -31,9 +31,8 @@ type ClusterSpec struct {
 	// Host must be a host string, a host:port pair, or a URL to the base of the apiserver.
 	Host         string   `json:"host,omitempty"`
 	Version      string   `json:"version,omitempty"`
-	Nodes        int      `json:"nodes,omitempty"`
+	Nodes        int      `json:"nodes_count,omitempty"`
 	Architecture string   `json:"architecture,omitempty"`
-	Status       string   `json:"status,omitempty"`
 	Type         string   `json:"type,omitempty"`
 	ClusterID    string   `json:"clusterid,omitempty"`
 	Projects     []string `json:"projects,omitempty"`
@@ -41,9 +40,9 @@ type ClusterSpec struct {
 }
 
 type EksSpec struct {
-	EksStatus    string `json:"eksstatus,omitempty"`
-	EksClusterID string `json:"eksclusterid,omitempty"`
-	EksName      string `json:"eksname,omitempty"`
+	EksStatus    string `json:"eks_status,omitempty"`
+	EksClusterID string `json:"eks_clusterid,omitempty"`
+	EksName      string `json:"eks_name,omitempty"`
 	APIAddress   string `json:"api_address,omitempty"`
 }
 
@@ -51,6 +50,28 @@ type EksSpec struct {
 type ClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	ClusterStatus       string   `json:"cluster_status,omitempty"`
+	Nodes               []Node   `json:"nodes,omitempty"`
+	ClusterStatusReason []string `json:"cluster_status_reason,omitempty"`
+
+	// when controller restart,we only set the cluster which .status.needreconcile
+	// is true to cache, others need to reenter controller cycle to make sure some
+	// action in cluster is finished
+	HasReconciledOnce bool `json:"has_reconciled_once,omitempty"`
+}
+
+type Node struct {
+	Name      string          `json:"node_name,omitempty"`
+	Role      string          `json:"node_role,omitempty"`
+	Status    string          `json:"node_status,omitempty"`
+	Component ComponentStatus `json:"component_status,omitempty"`
+}
+
+type ComponentStatus struct {
+	ApiserverStatus         string `json:"apiserver_status,omitempty"`
+	ControllerManagerStatus string `json:"controller_manager_status,omitempty"`
+	SchedulerStatus         string `json:"scheduler_status,omitempty"`
+	EtcdStatus              string `json:"etcd_status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

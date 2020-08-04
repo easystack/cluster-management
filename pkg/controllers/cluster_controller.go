@@ -19,13 +19,13 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/go-logr/logr"
-	"k8s.io/client-go/util/retry"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	cli "sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,9 +40,23 @@ const (
 )
 
 const (
-	eksDeleteComplete       = "DELETE_COMPLETE"
 	clusterTypeEks          = "EKS"
 	errorEksClusterNotFound = "Resource not found"
+)
+
+const (
+	//eksCreateInProgress    = "CREATE_IN_PROGRESS"
+	//eksCreateFailed        = "CREATE_FAILED"
+	//eksCreateComplete      = "CREATE_COMPLETE"
+	//eksUpdateInProgress    = "UPDATE_IN_PROGRESS"
+	//eksUpdateFailed        = "UPDATE_FAILED"
+	//eksUpdateComplete      = "UPDATE_COMPLETE"
+	//eksDeleteInProgress    = "DELETE_IN_PROGRESS"
+	//eksDeleteFailed        = "DELETE_FAILED"
+	eksDeleteComplete = "DELETE_COMPLETE"
+	//eksRollbackInProgress  = "ROLLBACK_IN_PROGRESS"
+	//eksRollbackFailed      = "ROLLBACK_FAILED"
+	//eksRollbackComplete    = "ROLLBACK_COMPLETE"
 )
 
 type clusterCache struct {
@@ -131,7 +145,7 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		logger.Info("Add Event", "CRD Spec", cluster)
 		if cluster.Spec.Type == clusterTypeEks {
 			if !strings.HasSuffix(cluster.Spec.Eks.EksStatus, "COMPLETE") || cluster.Spec.Host == "" {
-				logger.Info("Check Eks Cluster Status", "ClusterID", cluster.Spec.ClusterID, "Status", cluster.Spec.Status)
+				logger.Info("Check Eks Cluster Status", "ClusterID", cluster.Spec.ClusterID, "Status", cluster.Status.ClusterStatus)
 				return ctrl.Result{Requeue: true}, nil
 			}
 		}
@@ -140,6 +154,13 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 		logger.Info("Add Event", "Assign Namespace Resources To Cluster", key)
 		if err := r.k8sService.AssignClusterToProjects(ctx, &cluster, cluster.Spec.Projects); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		// if all action succeed with cluster, we set .status.needreconcile to true
+		cluster.Status.HasReconciledOnce = true
+		if err := r.client.Update(ctx, &cluster); err != nil {
+			logger.Error(err, "Failed to update Cluster cr status.needreconcile")
 			return ctrl.Result{}, err
 		}
 		// Last we set this to cache when all action succeed
@@ -154,37 +175,66 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			logger.Info("Do nothing if projects not change")
 		} else {
 			logger.Info("Update Cluster projects info")
-			r.cache.set(key, cluster)
 
 			if err := r.updateClusterProjects(ctx, &cluster, cached.Spec.Projects, cluster.Spec.Projects); err != nil {
 				return ctrl.Result{}, err
 			}
+			// Last we set this to cache when all action succeed
+			r.cache.set(key, cluster)
 		}
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *ClusterReconciler) PollingClusterInfo() error {
+// before controller running, we should cache all crs which has already exist and which Status.HasReconcileOnce
+// is true, that means those crs which already reconciled once do not need to added again when controller start/restart
+func (r *ClusterReconciler) MakeSourceReadyBeforeReconcile() {
+	rootCtx := context.Background()
+	logger := r.log.WithName("BeforeReconcile")
+	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
+	var clusterList ecnsv1.ClusterList
+	// Get all Cluster CRD
+	err := r.client.List(ctx, &clusterList)
+	if err != nil {
+		logger.Error(err, "Failed to list Clusters")
+		return
+	}
+
+	for _, c := range clusterList.Items {
+		if hasReconciled := c.Status.HasReconciledOnce; hasReconciled {
+			clusterName := c.ObjectMeta.Name
+			clusterNamespace := c.ObjectMeta.Namespace
+			key := clusterName + clusterNamespace
+			logger.Info("Cache clusters before reconcile", "Cluster", clusterName)
+			r.cache.set(key, c)
+		}
+	}
+	return
+}
+
+func (r *ClusterReconciler) PollingClusterInfo() {
+	stopCh := make(chan struct{})
+	wait.Until(r.pollingClusterLoop, time.Duration(r.pollingPeriod)*time.Second, stopCh)
+}
+
+func (r *ClusterReconciler) pollingClusterLoop() {
 	rootCtx := context.Background()
 	logger := r.log.WithName("Polling")
 	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
 
 	var clusterList ecnsv1.ClusterList
+	// Get all Cluster CRD
+	err := r.client.List(ctx, &clusterList)
+	if err != nil {
+		logger.Error(err, "Failed to list Clusters")
+		return
+	}
 
-	for {
-		time.Sleep(time.Duration(r.pollingPeriod) * time.Second)
-
-		// Get all Cluster CRD
-		err := r.client.List(ctx, &clusterList)
-		if err != nil {
-			logger.Error(err, "Failed to list Clusters")
-		}
-
-		for i := range clusterList.Items {
-			if err := r.pollingAndUpdate(ctx, &clusterList.Items[i], r.k8sService); err != nil {
-				logger.Error(err, "Failed to pollingAndUpdate cluster", "The Cluster is", &clusterList.Items[i])
-			}
+	for i := range clusterList.Items {
+		//logger.Info("[Polling]:", "Cluster", &clusterList.Items[i].Name)
+		if err := r.pollingAndUpdate(ctx, &clusterList.Items[i], r.k8sService); err != nil {
+			logger.Error(err, "Failed to pollingAndUpdate cluster", "The Cluster is", &clusterList.Items[i])
 		}
 	}
 }
@@ -253,6 +303,12 @@ func (r *ClusterReconciler) checkAndUpdateEksCluster(ctx context.Context, cluste
 	if !reflect.DeepEqual(cluster.Spec.Eks, eksSpec) {
 		whetherToUpdate = true
 		cluster.Spec.Eks = eksSpec
+		// if eks not in COMPLETE status, we should also to add eks status to cluster cr.Status.ClusterStatus
+		if cluster.Status.ClusterStatus != eksSpec.EksStatus && !strings.HasSuffix(eksSpec.EksStatus, "COMPLETE") {
+			cluster.Status.ClusterStatus = eksSpec.EksStatus
+			message := fmt.Sprintf("[%s] Cluster is in %s Status, when cluster in COMPLETE status, it will be reconciled in next loop", "EKS", eksSpec.EksStatus)
+			cluster.Status.ClusterStatusReason = append(cluster.Status.ClusterStatusReason, message)
+		}
 	}
 
 	if whetherToUpdate {
