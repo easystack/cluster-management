@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"reflect"
@@ -189,28 +191,45 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 // before controller running, we should cache all crs which has already exist and which Status.HasReconcileOnce
 // is true, that means those crs which already reconciled once do not need to added again when controller start/restart
-func (r *ClusterReconciler) MakeSourceReadyBeforeReconcile() {
-	rootCtx := context.Background()
-	logger := r.log.WithName("BeforeReconcile")
-	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
-	var clusterList ecnsv1.ClusterList
-	// Get all Cluster CRD
-	err := r.client.List(ctx, &clusterList)
-	if err != nil {
-		logger.Error(err, "Failed to list Clusters")
-		return
+func (r *ClusterReconciler) MakeSourceReadyBeforeReconcile(nameSpace string) error {
+	var clusterGVR = &schema.GroupVersionResource{
+		Group:    "ecns.easystack.com",
+		Version:  "v1",
+		Resource: "clusters",
 	}
 
-	for _, c := range clusterList.Items {
+	dynamicClient, err := k8s.GetDynamicClient()
+	if err != nil {
+		r.log.Error(err, "Failed to init dynamicClient")
+		return err
+	}
+
+	// Get all Cluster CRD
+	unstructuredClusterList, err := k8s.GetCRList(&dynamicClient, clusterGVR, nameSpace)
+	if err != nil {
+		r.log.Error(err, "Failed to list Clusters by dynamicClient")
+		return err
+	}
+
+	r.log.Info("UnstructuredClusterList", "Clusters", unstructuredClusterList.Items)
+	for _, obj := range unstructuredClusterList.Items {
+		unstructured := obj.UnstructuredContent()
+		var c ecnsv1.Cluster
+		err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructured, &c)
+		if err != nil {
+			r.log.Error(err, "Failed to do Type Conversion from unstructured to ecnsv1.Cluster", "Cluster", obj)
+			continue
+		}
+
 		if hasReconciled := c.Status.HasReconciledOnce; hasReconciled {
 			clusterName := c.ObjectMeta.Name
 			clusterNamespace := c.ObjectMeta.Namespace
-			key := clusterName + clusterNamespace
-			logger.Info("Cache clusters before reconcile", "Cluster", clusterName)
+			key := clusterNamespace + clusterName
+			r.log.Info("Cache clusters before reconcile", "Cluster", c)
 			r.cache.set(key, c)
 		}
 	}
-	return
+	return nil
 }
 
 func (r *ClusterReconciler) PollingClusterInfo() {
@@ -231,12 +250,19 @@ func (r *ClusterReconciler) pollingClusterLoop() {
 		return
 	}
 
-	for i := range clusterList.Items {
-		//logger.Info("[Polling]:", "Cluster", &clusterList.Items[i].Name)
-		if err := r.pollingAndUpdate(ctx, &clusterList.Items[i], r.k8sService); err != nil {
-			logger.Error(err, "Failed to pollingAndUpdate cluster", "The Cluster is", &clusterList.Items[i])
-		}
+	var wg sync.WaitGroup
+
+	for _, cluster := range clusterList.Items {
+		wg.Add(1)
+		go func(ctx context.Context, c *ecnsv1.Cluster, k8sService *k8s.KService) {
+			defer wg.Done()
+			logger.Info("[Polling]:", "Cluster", c.Name)
+			if err := r.pollingAndUpdate(ctx, c, k8sService); err != nil {
+				logger.Error(err, "Failed to pollingAndUpdate cluster", "The Cluster is", c)
+			}
+		}(ctx, &cluster, r.k8sService)
 	}
+	wg.Wait()
 }
 
 func (r *ClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *ecnsv1.Cluster, k8sService *k8s.KService) error {

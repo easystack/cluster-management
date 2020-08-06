@@ -51,6 +51,8 @@ func init() {
 func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
+	var nameSpace string
+	flag.StringVar(&nameSpace, "resource-namespace", "ems", "The controller watch resources in which namespace")
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8899", "The address the metric endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
@@ -80,6 +82,7 @@ func main() {
 		MetricsBindAddress: metricsAddr,
 		LeaderElection:     enableLeaderElection,
 		Port:               9443,
+		Namespace:          nameSpace,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -87,7 +90,10 @@ func main() {
 	}
 
 	rc := controllers.NewClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("Cluster"), &k8sReconcile, *pollingPeriod)
-	rc.MakeSourceReadyBeforeReconcile()
+	err = rc.MakeSourceReadyBeforeReconcile(nameSpace)
+	if err != nil {
+		setupLog.Error(err, "Failed to cache clusters before reconcile")
+	}
 
 	polling := controllers.NewClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("Cluster"), &k8sPolling, *pollingPeriod)
 	go polling.PollingClusterInfo()
