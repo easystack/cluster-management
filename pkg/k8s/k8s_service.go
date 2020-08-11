@@ -100,7 +100,7 @@ func (k *KService) CheckClusterInfo(ctx context.Context, cluster *ecnsv1.Cluster
 		}
 		return nil
 	}, maxRetryLimit); err != nil {
-		message := fmt.Sprintf("Can not connect to the cluster through %s", cluster.Spec.Host)
+		message := fmt.Sprintf("Can not connect to the cluster through %s, the error is [%s]", cluster.Spec.Host, err.Error())
 		reason = append(reason, message)
 		isDisconnected = true
 	}
