@@ -254,13 +254,14 @@ func (r *ClusterReconciler) pollingClusterLoop() {
 
 	for _, cluster := range clusterList.Items {
 		wg.Add(1)
-		go func(ctx context.Context, c *ecnsv1.Cluster, k8sService *k8s.KService) {
+		tmp := cluster
+		go func(c ecnsv1.Cluster) {
 			defer wg.Done()
 			logger.Info("[Polling]:", "Cluster", c.Name)
-			if err := r.pollingAndUpdate(ctx, c, k8sService); err != nil {
+			if err := r.pollingAndUpdate(ctx, &c, r.k8sService); err != nil {
 				logger.Error(err, "Failed to pollingAndUpdate cluster", "The Cluster is", c)
 			}
-		}(ctx, &cluster, r.k8sService)
+		}(tmp)
 	}
 	wg.Wait()
 }
