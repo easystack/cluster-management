@@ -33,7 +33,7 @@ const (
 
 	// if we can not connnect to cluster because some reason
 	// we will set cluster cr status to DISCONNECTED
-	clusterDisConnected = "DisConnected"
+	clusterDisConnected = "Disconnected"
 
 	// when controller call cluster apiserver if some error caused in request,
 	// we will retry until maximum times exceeded, then controller
