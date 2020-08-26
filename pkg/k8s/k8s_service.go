@@ -263,6 +263,7 @@ func (k *KService) generateNewCluster(cluster *ecnsv1.Cluster, nodes *v1.NodeLis
 
 	var clusterSpec = ecnsv1.ClusterSpec{
 		Host:         cluster.Spec.Host,
+		PublicVip:    cluster.Spec.PublicVip,
 		Nodes:        len(nodes.Items),
 		Version:      node1.Status.NodeInfo.KubeletVersion,
 		Architecture: node1.Status.NodeInfo.Architecture,

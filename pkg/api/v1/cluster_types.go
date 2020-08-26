@@ -30,6 +30,7 @@ type ClusterSpec struct {
 
 	// Host must be a host string, a host:port pair, or a URL to the base of the apiserver.
 	Host         string   `json:"host,omitempty"`
+	PublicVip    string   `json:"public_vip,omitempty"`
 	Version      string   `json:"version,omitempty"`
 	Nodes        int      `json:"nodes_count,omitempty"`
 	Architecture string   `json:"architecture,omitempty"`
