@@ -61,10 +61,10 @@ const (
 type clusterStatusReaon []string
 
 type KService struct {
-	Host     string
 	Token    *tokens.Token
 	OSClient *openstack.OSService
 	Cache    *clientCache
+	sync.RWMutex
 }
 
 type clientCache struct {
@@ -130,7 +130,9 @@ func (k *KService) getK8sClient(ctx context.Context, cluster *ecnsv1.Cluster) (*
 	if k.Token == nil || k.Token.ExpiresAt.Before(time.Now()) {
 		logger.Info("Token is nil or is expired, need to renew")
 		token, _ := k.OSClient.GetKeystoneToken(ctx)
+		k.Lock()
 		k.Token = token
+		k.Unlock()
 		cs, _ := k.newK8sClient(ctx, cluster)
 		k.Cache.set(key, cs)
 	} else if !ok {
@@ -146,7 +148,7 @@ func (k *KService) newK8sClient(ctx context.Context, cluster *ecnsv1.Cluster) (*
 	logger := utils.GetLoggerOrDie(ctx)
 
 	config := rest.Config{
-		Host:        k.Host,
+		Host:        cluster.Spec.Host,
 		BearerToken: k.Token.ID,
 		TLSClientConfig: rest.TLSClientConfig{
 			Insecure: true,

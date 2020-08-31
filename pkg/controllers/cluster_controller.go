@@ -152,8 +152,6 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			}
 		}
 
-		r.k8sService.Host = cluster.Spec.Host
-
 		logger.Info("Add Event", "Assign Namespace Resources To Cluster", key)
 		if err := r.k8sService.AssignClusterToProjects(ctx, &cluster, cluster.Spec.Projects); err != nil {
 			return ctrl.Result{}, err
@@ -276,7 +274,6 @@ func (r *ClusterReconciler) pollingAndUpdate(ctx context.Context, cluster *ecnsv
 			return nil
 		}
 	}
-	k8sService.Host = cluster.Spec.Host
 
 	whetherUpdate, err := k8sService.CheckClusterInfo(ctx, cluster)
 	if err != nil {
