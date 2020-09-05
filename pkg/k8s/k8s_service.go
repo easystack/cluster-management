@@ -56,14 +56,19 @@ const (
 	masterNode = "master"
 
 	workerNode = "node"
+
+	// Unauthorized
+	unauthorized = "Unauthorized"
 )
 
 type clusterStatusReaon []string
 
 type KService struct {
-	Token    *tokens.Token
-	OSClient *openstack.OSService
-	Cache    *clientCache
+	// if error is Unauthorized, we think token is not right and we should renew token
+	NeedToReNewToken bool
+	Token            *tokens.Token
+	OSClient         *openstack.OSService
+	Cache            *clientCache
 	sync.RWMutex
 }
 
@@ -72,20 +77,29 @@ type clientCache struct {
 	clientMap map[string]*kubernetes.Clientset
 }
 
+func (k *KService) ReSetNeedToReNewTokenFlag(needToRenewToken bool) {
+	k.Lock()
+	defer k.Unlock()
+	k.NeedToReNewToken = needToRenewToken
+}
+
 func (k *KService) CheckClusterInfo(ctx context.Context, cluster *ecnsv1.Cluster) (bool, error) {
 	logger := utils.GetLoggerOrDie(ctx)
 
-	client, _ := k.getK8sClient(ctx, cluster)
 	var clusterNodes *v1.NodeList
 	var systemPods *v1.PodList
 	var reason clusterStatusReaon
 
 	isDisconnected := false
 	if err := k.Retry(ctx, func() error {
+		client, _ := k.getK8sClient(ctx, cluster)
 		//get cluster nodes
 		nodes, err := client.CoreV1().Nodes().List(metav1.ListOptions{})
 		if err != nil {
 			logger.Error(err, "Failed to get nodes")
+			if err.Error() == unauthorized {
+				k.ReSetNeedToReNewTokenFlag(true)
+			}
 			return err
 		} else {
 			clusterNodes = nodes
@@ -94,6 +108,9 @@ func (k *KService) CheckClusterInfo(ctx context.Context, cluster *ecnsv1.Cluster
 		pods, err := client.CoreV1().Pods("kube-system").List(metav1.ListOptions{})
 		if err != nil {
 			logger.Error(err, "Failed to get pods in kube-system namespace")
+			if err.Error() == unauthorized {
+				k.ReSetNeedToReNewTokenFlag(true)
+			}
 			return err
 		} else {
 			systemPods = pods
@@ -122,20 +139,25 @@ func (k *KService) getK8sClient(ctx context.Context, cluster *ecnsv1.Cluster) (*
 
 	if k.Cache == nil {
 		logger.Info("Init cache for k8s clients")
+		k.Lock()
 		k.Cache = &clientCache{clientMap: make(map[string]*kubernetes.Clientset)}
+		k.Unlock()
 	}
 
 	key := cluster.Spec.Host
-	cs, ok := k.Cache.get(key)
-	if k.Token == nil || k.Token.ExpiresAt.Before(time.Now()) {
-		logger.Info("Token is nil or is expired, need to renew")
+	if k.Token == nil || k.Token.ExpiresAt.Before(time.Now()) || k.NeedToReNewToken {
+		logger.Info("Token is nil or is expired or unauthorized, need to renew")
 		token, _ := k.OSClient.GetKeystoneToken(ctx)
 		k.Lock()
 		k.Token = token
+		k.NeedToReNewToken = false
 		k.Unlock()
 		cs, _ := k.newK8sClient(ctx, cluster)
 		k.Cache.set(key, cs)
-	} else if !ok {
+	}
+
+	cs, ok := k.Cache.get(key)
+	if !ok {
 		logger.Info("GetClusterInfo: no k8s client, need to create new one")
 		cs, _ = k.newK8sClient(ctx, cluster)
 		k.Cache.set(key, cs)
