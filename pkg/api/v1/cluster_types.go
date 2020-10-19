@@ -45,6 +45,7 @@ type EksSpec struct {
 	EksClusterID string `json:"eks_clusterid,omitempty"`
 	EksName      string `json:"eks_name,omitempty"`
 	APIAddress   string `json:"api_address,omitempty"`
+	EksStackID   string `json:"eks_stackid,omitempty"`
 }
 
 // ClusterStatus defines the observed state of Cluster
@@ -59,6 +60,11 @@ type ClusterStatus struct {
 	// is true to cache, others need to reenter controller cycle to make sure some
 	// action in cluster is finished
 	HasReconciledOnce bool `json:"has_reconciled_once,omitempty"`
+
+	// now only eks has gc(pvc/lb) function, if gc failed, cluster controller
+	// will record in cluster.status
+	ClusterGCStatus       string   `json:"cluster_gc_status,omitempty"`
+	ClusterGCStatusReason []string `json:"cluster_gc_status_reason,omitempty"`
 }
 
 type Node struct {

@@ -35,6 +35,10 @@ import (
 	ecnsv1 "github.com/cluster-management/pkg/api/v1"
 	"github.com/cluster-management/pkg/k8s"
 	"github.com/cluster-management/pkg/utils"
+
+	"github.com/gophercloud/gophercloud/openstack/blockstorage/v2/volumes"
+	"github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/loadbalancers"
+	"github.com/gophercloud/gophercloud/openstack/orchestration/v1/stacks"
 )
 
 const (
@@ -44,6 +48,24 @@ const (
 const (
 	clusterTypeEks          = "EKS"
 	errorEksClusterNotFound = "Resource not found"
+
+	// cluster controller will clean up eks left pvc if this key
+	// is true in cr annotation
+	eksPvcGCKey = "eks-resource-gc/pvc"
+
+	// cluster controller will clean up eks left lb if this key
+	// is true in cr annotation
+	eksLbGCKey = "eks-resource-gc/lb"
+
+	// cluster GC status
+	clusterGCFailed = "GC_Failed"
+
+	clusterGCInProgress = "GC_In_Progress"
+
+	clusterGCComplete = "GC_Complete"
+
+	// GC max retry times
+	gcMaxRetry = 3
 )
 
 const (
@@ -301,12 +323,97 @@ func (r *ClusterReconciler) checkAndUpdateEksCluster(ctx context.Context, cluste
 		if err.Error() != errorEksClusterNotFound {
 			return false, err
 		} else {
-			// if eks cluster has been deleted, then delete the releated cr resource
-			logger.Info("Try to delete eks cr resource", "ClusterName", cluster.Name, "EKSClusterId", cluster.Spec.ClusterID)
-			err := r.client.Delete(ctx, cluster)
-			if err != nil {
-				logger.Error(err, "Failed to delete eks cr resource", "ClusterName", cluster.Name, "EKSClusterId", cluster.Spec.ClusterID)
-				return false, err
+			// if eks cluster has been deleted, next delete the releated cr resource
+			// (1): first check cr annotation key, if cr annotation has "eksPvcGCKey=true" or "eksLbGCKey=true"
+			//      cluster controller will clean up resources those eks left
+			// (2): if clean up all resources successed, next remove eksPvcGCKey and eksLbGCKey in cr annotation(
+			//      if cleaning up pvc successed, remove eksPvcGCKey, if cleaning up lb successed, remove eksLbGCKey)
+			//      and then delete cr
+			// (3): if clean up resources failed, in next loop controller will continue delete those resources
+			//      Tips: controller will retry 3 times in cleaning up resources
+			clusterAnnotations := cluster.ObjectMeta.Annotations
+			pvcGCFlag, ok := clusterAnnotations[eksPvcGCKey]
+			if !ok {
+				pvcGCFlag = "false"
+			}
+			lbGCFlag, ok := clusterAnnotations[eksLbGCKey]
+			if !ok {
+				lbGCFlag = "false"
+			}
+
+			// cluster controller GC action
+			if pvcGCFlag == "true" || lbGCFlag == "true" {
+				oldClusterGCStatus := cluster.Status.ClusterGCStatus
+				oldClusterGCStatusReason := cluster.Status.ClusterGCStatusReason
+
+				var gcStatusReason []string
+				var pvcErr error
+				var lbErr error
+
+				var subNetID string
+				if lbGCFlag == "true" {
+					eksStack, err := r.getEksStackInfo(cluster.Spec.Eks.EksStackID, ctx)
+					if err != nil {
+						msg := fmt.Sprintf("[GC] Failed to get eksStack, the stack id is %s", cluster.Spec.Eks.EksStackID)
+						logger.Error(err, msg)
+					}
+					subNetID = GetSubNetIDFromStack(eksStack)
+				}
+
+				for i := gcMaxRetry; i > 0; i-- {
+					gcStatusReason = []string{}
+					if pvcGCFlag == "true" {
+						pvcGCFlag, pvcErr = r.eksPvcGC(cluster, ctx, &gcStatusReason)
+					}
+
+					if lbGCFlag == "true" {
+						lbGCFlag, lbErr = r.eksLbGC(cluster, ctx, subNetID, &gcStatusReason)
+					}
+
+					if pvcErr == nil && lbErr == nil {
+						break
+					}
+				}
+
+				if pvcErr != nil {
+					gcStatusReason = append(gcStatusReason, pvcErr.Error())
+				}
+
+				if lbErr != nil {
+					gcStatusReason = append(gcStatusReason, lbErr.Error())
+				}
+
+				// some error happened in cluster GC,so record gcstatus clusterGCFailed
+				if len(gcStatusReason) != 0 {
+					cluster.Status.ClusterGCStatus = clusterGCFailed
+				} else {
+					// len(gcStatusReason)=0 but pvcGCFlag="true" or lbGCFlag="true" means that
+					// pvcs and lbs is in deleting status and next loop cluster will check those pvcs and lbs
+					// if those pvcs and lbs not found means delete successed
+					if pvcGCFlag == "true" || lbGCFlag == "true" {
+						cluster.Status.ClusterGCStatus = clusterGCInProgress
+					} else {
+						cluster.Status.ClusterGCStatus = clusterGCComplete
+					}
+				}
+				cluster.Status.ClusterGCStatusReason = gcStatusReason
+
+				if !reflect.DeepEqual(oldClusterGCStatus, cluster.Status.ClusterGCStatus) || !reflect.DeepEqual(oldClusterGCStatusReason, cluster.Status.ClusterGCStatusReason) {
+					err := r.updateClusterCRD(ctx, cluster)
+					if err != nil {
+						logger.Error(err, "[GC] Failed to update cluster CR !")
+					}
+				}
+			}
+
+			// it means gc successed or no need to gc, then delete cr resource
+			if pvcGCFlag == "false" && lbGCFlag == "false" {
+				logger.Info("Try to delete eks cr resource", "ClusterName", cluster.Name, "EKSClusterId", cluster.Spec.ClusterID)
+				err := r.client.Delete(ctx, cluster)
+				if err != nil {
+					logger.Error(err, "Failed to delete eks cr resource", "ClusterName", cluster.Name, "EKSClusterId", cluster.Spec.ClusterID)
+					return false, err
+				}
 			}
 			return false, nil
 		}
@@ -452,4 +559,137 @@ func removeString(slice []string, s string) (result []string) {
 		result = append(result, item)
 	}
 	return
+}
+
+func (r *ClusterReconciler) eksPvcGC(cluster *ecnsv1.Cluster, ctx context.Context, gcStatusReason *[]string) (string, error) {
+	logger := utils.GetLoggerOrDie(ctx)
+	cinderClient, err := r.k8sService.OSClient.GenerateOpenstackClient(ctx, "CinderV2")
+	if err != nil {
+		logger.Error(err, "Failed to generate cinder client !")
+		return "true", err
+	}
+
+	pvcListOpts := volumes.ListOpts{
+		AllTenants: true,
+		TenantID:   cluster.Spec.Projects[0],
+	}
+
+	result, err := volumes.List(cinderClient, &pvcListOpts).AllPages()
+	if err != nil {
+		logger.Error(err, "Cinder list Failed !")
+		return "true", err
+	}
+
+	allStorages, err := volumes.ExtractVolumes(result)
+	if err != nil {
+		logger.Error(err, "Cinder client ExtractVolumes error!")
+		return "true", err
+	}
+
+	// No cinder volume finded means pvc gc finished
+	if len(allStorages) == 0 {
+		delete(cluster.ObjectMeta.Annotations, eksPvcGCKey)
+		return "false", nil
+	}
+
+	baseName := fmt.Sprintf("%s-dynamic-pvc-", cluster.Spec.ClusterID)
+	deleteOpts := volumes.DeleteOpts{
+		Cascade: false,
+	}
+
+	// delete all cinder volumes and in next loop controller will check those volumes
+	// if no volumes found menas delete successed otherwise
+	for _, v := range allStorages {
+		if strings.HasPrefix(v.Name, baseName) {
+			res := volumes.Delete(cinderClient, v.ID, &deleteOpts)
+			if res.ExtractErr() != nil {
+				msg := fmt.Sprintf("Pvc GC Failed because of deleting volume error, the volume id is %s", v.ID)
+				*gcStatusReason = append(*gcStatusReason, msg)
+			}
+		}
+	}
+	return "true", nil
+}
+
+func (r *ClusterReconciler) eksLbGC(cluster *ecnsv1.Cluster, ctx context.Context, subNetID string, gcStatusReason *[]string) (string, error) {
+	logger := utils.GetLoggerOrDie(ctx)
+	lbClient, err := r.k8sService.OSClient.GenerateOpenstackClient(ctx, "LoadBalancerV2")
+	if err != nil {
+		logger.Error(err, "Failed to generate lb client !")
+		return "true", err
+	}
+
+	lbListOpts := loadbalancers.ListOpts{
+		ProjectID: cluster.Spec.Projects[0],
+	}
+
+	result, err := loadbalancers.List(lbClient, &lbListOpts).AllPages()
+	if err != nil {
+		logger.Error(err, "Failed to list lb !")
+		return "true", err
+	}
+
+	allLoadBalancers, err := loadbalancers.ExtractLoadBalancers(result)
+	if err != nil {
+		logger.Error(err, "Lb client ExtractVolumes error !")
+		return "true", err
+	}
+
+	// No lb found means lb gc finished
+	if len(allLoadBalancers) == 0 {
+		delete(cluster.ObjectMeta.Annotations, eksLbGCKey)
+		return "false", nil
+	}
+
+	lbDeleteOpts := loadbalancers.DeleteOpts{
+		Cascade: true,
+	}
+	filterDescription := fmt.Sprintf("Kubernetes external service")
+	for _, lb := range allLoadBalancers {
+		if strings.HasPrefix(lb.Description, filterDescription) && lb.VipSubnetID == subNetID {
+			res := loadbalancers.Delete(lbClient, lb.ID, &lbDeleteOpts)
+			if res.ExtractErr() != nil {
+				msg := fmt.Sprintf("LB GC Failed because of deleting lb error, the lb id is %s", lb.ID)
+				*gcStatusReason = append(*gcStatusReason, msg)
+			}
+		}
+	}
+	return "true", nil
+}
+
+func (r *ClusterReconciler) getEksStackInfo(stackID string, ctx context.Context) (*stacks.RetrievedStack, error) {
+	logger := utils.GetLoggerOrDie(ctx)
+	stackInfo := &stacks.RetrievedStack{}
+	heatClient, err := r.k8sService.OSClient.GenerateOpenstackClient(ctx, "HeatV1")
+	if err != nil {
+		logger.Error(err, "Failed to generate heat client !")
+		return stackInfo, err
+	}
+
+	result := stacks.Find(heatClient, stackID)
+	if result.Err != nil {
+		logger.Error(result.Err, "Failed to find this stack !")
+		return stackInfo, result.Err
+	}
+
+	stack, err := result.Extract()
+	if err != nil {
+		logger.Error(err, "Failed to Extract this stack !")
+		return stackInfo, err
+	}
+
+	return stack, nil
+}
+
+func GetSubNetIDFromStack(stack *stacks.RetrievedStack) string {
+	for _, v := range stack.Outputs {
+		if v["output_key"] == "fixed_network" {
+			outPutValue, ok := v["output_value"].(string)
+			if !ok {
+				return ""
+			}
+			return outPutValue
+		}
+	}
+	return ""
 }

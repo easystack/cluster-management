@@ -256,10 +256,12 @@ func (k *KService) generateNewCluster(cluster *ecnsv1.Cluster, nodes *v1.NodeLis
 	// we only update the cluster status to unknow and unhealthy
 	if isDisconnected {
 		var clusterStatus = ecnsv1.ClusterStatus{
-			ClusterStatus:       clusterDisConnected,
-			Nodes:               cluster.Status.Nodes,
-			ClusterStatusReason: *reason,
-			HasReconciledOnce:   cluster.Status.HasReconciledOnce,
+			ClusterStatus:         clusterDisConnected,
+			Nodes:                 cluster.Status.Nodes,
+			ClusterStatusReason:   *reason,
+			HasReconciledOnce:     cluster.Status.HasReconciledOnce,
+			ClusterGCStatus:       cluster.Status.ClusterGCStatus,
+			ClusterGCStatusReason: cluster.Status.ClusterGCStatusReason,
 		}
 		return cluster.Spec, clusterStatus
 	}
@@ -277,10 +279,12 @@ func (k *KService) generateNewCluster(cluster *ecnsv1.Cluster, nodes *v1.NodeLis
 	}
 
 	var clusterStatus = ecnsv1.ClusterStatus{
-		ClusterStatus:       newClusterStatus,
-		Nodes:               newClusterNodes,
-		ClusterStatusReason: *newReason,
-		HasReconciledOnce:   cluster.Status.HasReconciledOnce,
+		ClusterStatus:         newClusterStatus,
+		Nodes:                 newClusterNodes,
+		ClusterStatusReason:   *newReason,
+		HasReconciledOnce:     cluster.Status.HasReconciledOnce,
+		ClusterGCStatus:       cluster.Status.ClusterGCStatus,
+		ClusterGCStatusReason: cluster.Status.ClusterGCStatusReason,
 	}
 
 	node1 := nodes.Items[0]
