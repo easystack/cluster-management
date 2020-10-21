@@ -586,26 +586,34 @@ func (r *ClusterReconciler) eksPvcGC(cluster *ecnsv1.Cluster, ctx context.Contex
 		return "true", err
 	}
 
+	var pvcVolumeList []volumes.Volume
+	baseName := fmt.Sprintf("%s-dynamic-pvc-", cluster.Spec.ClusterID)
+	for _, v := range allStorages {
+		if strings.HasPrefix(v.Name, baseName) {
+			pvcVolumeList = append(pvcVolumeList, v)
+		}
+	}
+
 	// No cinder volume finded means pvc gc finished
-	if len(allStorages) == 0 {
+	if len(pvcVolumeList) == 0 {
+		logger.Info("[GC]: No volumes found, pvc gc succeed !")
 		delete(cluster.ObjectMeta.Annotations, eksPvcGCKey)
 		return "false", nil
 	}
 
-	baseName := fmt.Sprintf("%s-dynamic-pvc-", cluster.Spec.ClusterID)
 	deleteOpts := volumes.DeleteOpts{
 		Cascade: false,
 	}
 
 	// delete all cinder volumes and in next loop controller will check those volumes
 	// if no volumes found menas delete successed otherwise
-	for _, v := range allStorages {
-		if strings.HasPrefix(v.Name, baseName) {
-			res := volumes.Delete(cinderClient, v.ID, &deleteOpts)
-			if res.ExtractErr() != nil {
-				msg := fmt.Sprintf("Pvc GC Failed because of deleting volume error, the volume id is %s", v.ID)
-				*gcStatusReason = append(*gcStatusReason, msg)
-			}
+	for _, v := range pvcVolumeList {
+		msg := fmt.Sprintf("[GC]: start to delete volume, the volume id is %s", v.ID)
+		logger.Info(msg)
+		res := volumes.Delete(cinderClient, v.ID, &deleteOpts)
+		if res.ExtractErr() != nil {
+			msg := fmt.Sprintf("Pvc GC Failed because of deleting volume error, the volume id is %s", v.ID)
+			*gcStatusReason = append(*gcStatusReason, msg)
 		}
 	}
 	return "true", nil
@@ -635,8 +643,17 @@ func (r *ClusterReconciler) eksLbGC(cluster *ecnsv1.Cluster, ctx context.Context
 		return "true", err
 	}
 
-	// No lb found means lb gc finished
-	if len(allLoadBalancers) == 0 {
+	var eksLoadBalancerList []loadbalancers.LoadBalancer
+	filterDescription := fmt.Sprintf("Kubernetes external service")
+	for _, lb := range allLoadBalancers {
+		if strings.HasPrefix(lb.Description, filterDescription) && lb.VipSubnetID == subNetID {
+			eksLoadBalancerList = append(eksLoadBalancerList, lb)
+		}
+	}
+
+	// if no lb found means lb gc finished
+	if len(eksLoadBalancerList) == 0 {
+		logger.Info("[GC]: No lbs found, lb gc succeed !")
 		delete(cluster.ObjectMeta.Annotations, eksLbGCKey)
 		return "false", nil
 	}
@@ -644,14 +661,13 @@ func (r *ClusterReconciler) eksLbGC(cluster *ecnsv1.Cluster, ctx context.Context
 	lbDeleteOpts := loadbalancers.DeleteOpts{
 		Cascade: true,
 	}
-	filterDescription := fmt.Sprintf("Kubernetes external service")
-	for _, lb := range allLoadBalancers {
-		if strings.HasPrefix(lb.Description, filterDescription) && lb.VipSubnetID == subNetID {
-			res := loadbalancers.Delete(lbClient, lb.ID, &lbDeleteOpts)
-			if res.ExtractErr() != nil {
-				msg := fmt.Sprintf("LB GC Failed because of deleting lb error, the lb id is %s", lb.ID)
-				*gcStatusReason = append(*gcStatusReason, msg)
-			}
+	for _, lb := range eksLoadBalancerList {
+		msg := fmt.Sprintf("[GC]: start to delete loadbalancer, the lb id is %s", lb.ID)
+		logger.Info(msg)
+		res := loadbalancers.Delete(lbClient, lb.ID, &lbDeleteOpts)
+		if res.ExtractErr() != nil {
+			msg := fmt.Sprintf("LB GC Failed because of deleting lb error, the lb id is %s", lb.ID)
+			*gcStatusReason = append(*gcStatusReason, msg)
 		}
 	}
 	return "true", nil
@@ -683,7 +699,7 @@ func (r *ClusterReconciler) getEksStackInfo(stackID string, ctx context.Context)
 
 func GetSubNetIDFromStack(stack *stacks.RetrievedStack) string {
 	for _, v := range stack.Outputs {
-		if v["output_key"] == "fixed_network" {
+		if v["output_key"] == "subnet" {
 			outPutValue, ok := v["output_value"].(string)
 			if !ok {
 				return ""
