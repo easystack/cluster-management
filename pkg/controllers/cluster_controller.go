@@ -141,11 +141,11 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		// do not clean up resources in eks before delete cr, because eks cluster has been deleted
 		if containsString(cluster.ObjectMeta.Finalizers, myFinalizerName) && cluster.Spec.Type != clusterTypeEks {
 			// our finalizer is present, so lets handle any external dependency
-			if err := r.deleteExternalResources(&cluster, ctx); err != nil {
-				// if fail to delete the external dependency here, return with error
-				// so that it can be retried
-				return ctrl.Result{}, err
-			}
+			//if err := r.deleteExternalResources(&cluster, ctx); err != nil {
+			//	// if fail to delete the external dependency here, return with error
+			//	// so that it can be retried
+			//	return ctrl.Result{}, err
+			//}
 
 			// remove our finalizer from the list and update it.
 			cluster.ObjectMeta.Finalizers = removeString(cluster.ObjectMeta.Finalizers, myFinalizerName)
@@ -169,10 +169,10 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			}
 		}
 
-		logger.Info("Add Event", "Assign Namespace Resources To Cluster", key)
-		if err := r.k8sService.AssignClusterToProjects(ctx, &cluster, cluster.Spec.Projects); err != nil {
-			return ctrl.Result{}, err
-		}
+		//logger.Info("Add Event", "Assign Namespace Resources To Cluster", key)
+		//if err := r.k8sService.AssignClusterToProjects(ctx, &cluster, cluster.Spec.Projects); err != nil {
+		//	return ctrl.Result{}, err
+		//}
 
 		// if all action succeed with cluster, we set .status.needreconcile to true
 		cluster.Status.HasReconciledOnce = true
@@ -193,9 +193,9 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		} else {
 			logger.Info("Update Cluster projects info")
 
-			if err := r.updateClusterProjects(ctx, &cluster, cached.Spec.Projects, cluster.Spec.Projects); err != nil {
-				return ctrl.Result{}, err
-			}
+			//if err := r.updateClusterProjects(ctx, &cluster, cached.Spec.Projects, cluster.Spec.Projects); err != nil {
+			//	return ctrl.Result{}, err
+			//}
 			// Last we set this to cache when all action succeed
 			r.cache.set(key, cluster)
 		}
