@@ -20,15 +20,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
-	"reflect"
-	"strings"
-	"sync"
-	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	cli "sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,6 +47,7 @@ const (
 
 const (
 	clusterTypeEks          = "EKS"
+	clusterTypeEos          = "EOS"
 	errorEksClusterNotFound = "Resource not found"
 
 	// cluster controller will clean up eks left pvc if this key
@@ -130,7 +132,7 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		// The object is not being deleted, so if it does not have our finalizer,
 		// then lets add the finalizer and update the object. This is equivalent
 		// registering our finalizer.
-		if !containsString(cluster.ObjectMeta.Finalizers, myFinalizerName) && cluster.Spec.Type != clusterTypeEks {
+		if !containsString(cluster.ObjectMeta.Finalizers, myFinalizerName) && cluster.Spec.Type != clusterTypeEks && cluster.Spec.Type != clusterTypeEos {
 			cluster.ObjectMeta.Finalizers = append(cluster.ObjectMeta.Finalizers, myFinalizerName)
 			if err := r.client.Update(ctx, &cluster); err != nil {
 				return ctrl.Result{}, err
@@ -139,7 +141,7 @@ func (r *ClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	} else {
 		// The object is being deleted
 		// do not clean up resources in eks before delete cr, because eks cluster has been deleted
-		if containsString(cluster.ObjectMeta.Finalizers, myFinalizerName) && cluster.Spec.Type != clusterTypeEks {
+		if containsString(cluster.ObjectMeta.Finalizers, myFinalizerName) && cluster.Spec.Type != clusterTypeEks && cluster.Spec.Type != clusterTypeEos {
 			// our finalizer is present, so lets handle any external dependency
 			if err := r.deleteExternalResources(&cluster, ctx); err != nil {
 				// if fail to delete the external dependency here, return with error
