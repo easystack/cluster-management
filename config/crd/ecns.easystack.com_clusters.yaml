@@ -1,0 +1,121 @@
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.2.5
+  creationTimestamp: null
+  name: clusters.ecns.easystack.com
+spec:
+  group: ecns.easystack.com
+  names:
+    kind: Cluster
+    listKind: ClusterList
+    plural: clusters
+    singular: cluster
+  scope: Namespaced
+  validation:
+    openAPIV3Schema:
+      description: Cluster is the Schema for the clusters API
+      properties:
+        apiVersion:
+          description: 'APIVersion defines the versioned schema of this representation
+            of an object. Servers should convert recognized schemas to the latest
+            internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+          type: string
+        kind:
+          description: 'Kind is a string value representing the REST resource this
+            object represents. Servers may infer this from the endpoint the client
+            submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+          type: string
+        metadata:
+          type: object
+        spec:
+          description: ClusterSpec defines the desired state of Cluster
+          properties:
+            architecture:
+              type: string
+            clusterid:
+              type: string
+            eks:
+              properties:
+                api_address:
+                  type: string
+                eks_clusterid:
+                  type: string
+                eks_name:
+                  type: string
+                eks_stackid:
+                  type: string
+                eks_status:
+                  type: string
+              type: object
+            host:
+              description: Host must be a host string, a host:port pair, or a URL
+                to the base of the apiserver.
+              type: string
+            nodes_count:
+              type: integer
+            projects:
+              items:
+                type: string
+              type: array
+            public_vip:
+              type: string
+            type:
+              type: string
+            version:
+              type: string
+          type: object
+        status:
+          description: ClusterStatus defines the observed state of Cluster
+          properties:
+            cluster_status:
+              description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
+                of cluster Important: Run "make" to regenerate code after modifying
+                this file'
+              type: string
+            cluster_status_reason:
+              items:
+                type: string
+              type: array
+            conditions:
+              items:
+                properties:
+                  lastUpdateTime:
+                    type: string
+                  reason:
+                    type: string
+                  type:
+                    type: string
+                type: object
+              type: array
+            nodes:
+              items:
+                properties:
+                  arch:
+                    type: string
+                  node_name:
+                    type: string
+                  node_role:
+                    type: string
+                  node_status:
+                    type: string
+                  version:
+                    type: string
+                type: object
+              type: array
+          type: object
+      type: object
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: []
+  storedVersions: []
