@@ -19,26 +19,23 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/cluster-management/pkg/k8s"
-	osservice "github.com/cluster-management/pkg/openstack"
-	"github.com/gophercloud/gophercloud/openstack"
-	"golang.org/x/net/context"
 	"os"
+	"time"
 
 	ecnsv1 "github.com/cluster-management/pkg/api/v1"
 	"github.com/cluster-management/pkg/controllers"
-	"k8s.io/apimachinery/pkg/runtime"
+	"github.com/cluster-management/pkg/k8s"
+	oppkg "github.com/cluster-management/pkg/openstack"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	// +kubebuilder:scaffold:imports
 )
 
 var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	scheme = runtime.NewScheme()
 )
 
 func init() {
@@ -49,65 +46,52 @@ func init() {
 }
 
 func main() {
-	var metricsAddr string
-	var enableLeaderElection bool
-	var nameSpace string
+	var (
+		leaderid             = "cluster.manager"
+		metricsAddr          string
+		enableLeaderElection bool
+		nameSpace            string
+	)
+
 	flag.StringVar(&nameSpace, "resource-namespace", "eks", "The controller watch resources in which namespace")
-	flag.StringVar(&metricsAddr, "metrics-addr", ":8899", "The address the metric endpoint binds to.")
+	flag.StringVar(&metricsAddr, "metrics-addr", "0", "The address the metric endpoint binds to. default 0(means disable)")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
-	pollingPeriod := flag.Int("polling-period", 3, "The polling loop period.")
+	pollingPeriod := flag.Duration("polling-period", 5*time.Second, "The polling loop period.")
+	openstackPeriod := flag.Duration("openstack-period", 25*time.Second, "The polling loop period.")
+	syncdu := flag.Duration("sync-period", time.Second*30, "controller manager sync resource time duration")
+
+	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.Logger(true))
+	openstackMg := oppkg.NewOpMgr(*openstackPeriod)
+	k8mg := k8s.NewManage(*pollingPeriod, 5, func(_ string) (string, error) {
+		return openstackMg.NewToken()
+	})
 
-	// get ECS cloud admin credential info from env
-	opts, err := openstack.AuthOptionsFromEnv()
-	if err != nil {
-		fmt.Print(err)
-		setupLog.Error(err, "Failed to start since missing necessary openstack environment:")
-		os.Exit(1)
-	}
-
-	// Get keystone token to access kubernetes API
-	ctx := context.WithValue(context.Background(), "logger", setupLog)
-	osClient := osservice.OSService{Opts: &opts}
-	token, _ := osClient.GetKeystoneToken(ctx)
-
-	k8sReconcile := k8s.KService{Token: token, OSClient: &osClient}
-	k8sPolling := k8s.KService{Token: token, OSClient: &osClient}
-
+	newleaderid := fmt.Sprintf("%s.%s", leaderid, nameSpace)
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		SyncPeriod:         syncdu,
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
 		LeaderElection:     enableLeaderElection,
-		Port:               9443,
+		LeaderElectionID:   newleaderid,
+		Port:               0,
 		Namespace:          nameSpace,
 	})
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
+		panic(err)
 	}
 
-	rc := controllers.NewClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("Cluster"), &k8sReconcile, *pollingPeriod)
-	err = rc.MakeSourceReadyBeforeReconcile(nameSpace)
+	cluster := controllers.NewCluster(k8mg, openstackMg, enableLeaderElection)
+	controllers.NewController(mgr, cluster)
+	err = mgr.Add(cluster)
 	if err != nil {
-		setupLog.Error(err, "Failed to cache clusters before reconcile")
+		panic(err)
 	}
-
-	polling := controllers.NewClusterReconciler(mgr.GetClient(), ctrl.Log.WithName("Cluster"), &k8sPolling, *pollingPeriod)
-	go polling.PollingClusterInfo()
-
-	err = rc.SetupWithManager(mgr)
-	if err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Cluster")
-		os.Exit(1)
-	}
-
-	// +kubebuilder:scaffold:builder
-	setupLog.Info("starting manager")
+	klog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running manager")
+		klog.Errorf("start manager failed:%v", err)
 		os.Exit(1)
 	}
 }

@@ -20,6 +20,42 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type ClusterType string
+type ClusterStat string
+type NodeRole string
+type NodeStat string
+
+const (
+	ClusterEKS  ClusterType = "EKS"
+	ClusterEHOS ClusterType = "EHOS"
+	ClusterEOS  ClusterType = "EOS"
+)
+
+const (
+	NodeStatReady    NodeStat = "Ready"
+	NodeStatNotReady NodeStat = "NotReady"
+)
+
+const (
+	NodeRoleMaster NodeRole = "master"
+	NodeRoleWorker NodeRole = "node"
+)
+
+const (
+	// all nodes are ready and all components are healthy, we
+	// think the cluster is healthy
+	ClusterHealthy ClusterStat = "Healthy"
+
+	// if some node is notready or some component like apiserver,
+	// controller-manager is unhealthy, we think this cluster
+	// is unhealthy
+	ClusterWarning ClusterStat = "Warning"
+
+	// if we can not connnect to cluster because some reason
+	// we will set cluster cr status to DISCONNECTED
+	ClusterDisConnected ClusterStat = "Disconnected"
+)
+
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
@@ -29,19 +65,20 @@ type ClusterSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Host must be a host string, a host:port pair, or a URL to the base of the apiserver.
-	Host         string   `json:"host,omitempty"`
-	PublicVip    string   `json:"public_vip,omitempty"`
-	Version      string   `json:"version,omitempty"`
-	Nodes        int      `json:"nodes_count,omitempty"`
-	Architecture string   `json:"architecture,omitempty"`
-	Type         string   `json:"type,omitempty"`
-	ClusterID    string   `json:"clusterid,omitempty"`
-	Projects     []string `json:"projects,omitempty"`
-	Eks          EksSpec  `json:"eks,omitempty"`
+	Host         string      `json:"host,omitempty"`
+	PublicVip    string      `json:"public_vip,omitempty"`
+	Version      string      `json:"version,omitempty"`
+	Nodes        int         `json:"nodes_count,omitempty"`
+	Architecture string      `json:"architecture,omitempty"`
+	Type         ClusterType `json:"type,omitempty"`
+	ClusterID    string      `json:"clusterid,omitempty"`
+	Projects     []string    `json:"projects,omitempty"`
+	Eks          EksSpec     `json:"eks,omitempty"`
 }
 
 type EksSpec struct {
 	EksStatus    string `json:"eks_status,omitempty"`
+	EksReason    string `json:"eks_reason,omitempty"`
 	EksClusterID string `json:"eks_clusterid,omitempty"`
 	EksName      string `json:"eks_name,omitempty"`
 	APIAddress   string `json:"api_address,omitempty"`
@@ -52,37 +89,28 @@ type EksSpec struct {
 type ClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	ClusterStatus       string   `json:"cluster_status,omitempty"`
-	Nodes               []Node   `json:"nodes,omitempty"`
-	ClusterStatusReason []string `json:"cluster_status_reason,omitempty"`
+	ClusterStatus       ClusterStat `json:"cluster_status,omitempty"`
+	Nodes               []*Node     `json:"nodes,omitempty"`
+	ClusterStatusReason []string    `json:"cluster_status_reason,omitempty"`
 
-	// when controller restart,we only set the cluster which .status.needreconcile
-	// is true to cache, others need to reenter controller cycle to make sure some
-	// action in cluster is finished
-	HasReconciledOnce bool `json:"has_reconciled_once,omitempty"`
+	Conditions []*Condition `json:"conditions,omitempty"`
+}
 
-	// now only eks has gc(pvc/lb) function, if gc failed, cluster controller
-	// will record in cluster.status
-	ClusterGCStatus       string   `json:"cluster_gc_status,omitempty"`
-	ClusterGCStatusReason []string `json:"cluster_gc_status_reason,omitempty"`
+type Condition struct {
+	LastUpdateTime string `json:"lastUpdateTime,omitempty"`
+	Type           string `json:"type,omitempty"`
+	Reason         string `json:"reason,omitempty"`
 }
 
 type Node struct {
-	Name      string          `json:"node_name,omitempty"`
-	Role      string          `json:"node_role,omitempty"`
-	Status    string          `json:"node_status,omitempty"`
-	Component ComponentStatus `json:"component_status,omitempty"`
-}
-
-type ComponentStatus struct {
-	ApiserverStatus         string `json:"apiserver_status,omitempty"`
-	ControllerManagerStatus string `json:"controller_manager_status,omitempty"`
-	SchedulerStatus         string `json:"scheduler_status,omitempty"`
-	EtcdStatus              string `json:"etcd_status,omitempty"`
+	Name    string   `json:"node_name,omitempty"`
+	Role    NodeRole `json:"node_role,omitempty"`
+	Status  NodeStat `json:"node_status,omitempty"`
+	Version string   `json:"version,omitempty"`
+	Arch    string   `json:"arch,omitempty"`
 }
 
 // +kubebuilder:object:root=true
-
 // Cluster is the Schema for the clusters API
 type Cluster struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -93,7 +121,6 @@ type Cluster struct {
 }
 
 // +kubebuilder:object:root=true
-
 // ClusterList contains a list of Cluster
 type ClusterList struct {
 	metav1.TypeMeta `json:",inline"`
