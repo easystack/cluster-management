@@ -82,7 +82,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	} else {
 		err = r.server.Process(newvmobj, nsname)
 		if _, ok := err.(RemoveCrErr); ok {
-			klog.Infof("the error is RemoveCr Error,start delete cr %v", nsname)
+			klog.Infof("start remove cr %v", nsname)
 			return ctrl.Result{}, r.Delete(bctx, &vm)
 		}
 	}

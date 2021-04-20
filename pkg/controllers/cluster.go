@@ -42,7 +42,7 @@ func NewRemoveCrErr() error {
 }
 
 func (r RemoveCrErr) Error() string {
-	return ""
+	return "remove"
 }
 
 type removeCinder struct {
@@ -100,6 +100,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 		if _, ok := c.magnums[clusterInfo.UUID]; !ok {
 			continue
 		}
+		klog.V(3).Infof("sync cluster %s, uuid:%v", clusterInfo.Name, clusterInfo.UUID)
 		c.opmg.WrapClient(func(pv *gophercloud.ProviderClient) {
 			cli, err := openstack.NewContainerInfraV1(pv, gophercloud.EndpointOpts{Region: "RegionOne"})
 			if err != nil {
@@ -107,8 +108,10 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				return
 			}
 			var (
-				neweks = &v1.EksSpec{}
-				id     = clusterInfo.UUID
+				neweks = &v1.EksSpec{
+					EksHealthReasons: make(map[string]string),
+				}
+				id = clusterInfo.UUID
 			)
 			wg.Add(1)
 			utils.Submit(func() {
@@ -125,6 +128,14 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				neweks.EksName = info.Name
 				neweks.APIAddress = info.APIAddress
 				neweks.EksStackID = info.StackID
+				if info.HealthStatusReason != nil {
+					for k, v := range info.HealthStatusReason {
+						if s, ok := v.(string); ok {
+							neweks.EksHealthReasons[k] = s
+						}
+					}
+				}
+				neweks.Hadsync = true
 				klog.Infof("update cluster: %v", neweks)
 				neweks.DeepCopyInto(c.magnums[id])
 			})
@@ -132,6 +143,18 @@ func (c *Operate) mgFilter(page pagination.Page) {
 
 	}
 	wg.Wait()
+	for _, v := range c.magnums {
+		if !v.Hadsync {
+			v.EksStatus = ""
+			v.EksReason = ""
+			v.EksClusterID = ""
+			v.EksName = ""
+			v.APIAddress = ""
+			v.EksStackID = ""
+			v.EksHealthReasons = nil
+			v.Hadsync = true
+		}
+	}
 }
 
 func (c *Operate) cinderDeleteFn(page pagination.Page) {
@@ -272,11 +295,13 @@ func (c *Operate) k8status(clust *v1.Cluster) error {
 		return nil
 	}
 	spec.Nodes = len(nodes)
-	for _, no := range nodes {
-		if no.Version != "" {
-			spec.Version = nodes[0].Version
-			spec.Architecture = nodes[0].Arch
-			break
+	if spec.Version == "" {
+		for _, no := range nodes {
+			if no.Version != "" {
+				spec.Version = nodes[0].Version
+				spec.Architecture = nodes[0].Arch
+				break
+			}
 		}
 	}
 
@@ -289,12 +314,13 @@ func (c *Operate) k8status(clust *v1.Cluster) error {
 	case AllNotReady:
 		status.ClusterStatus = v1.ClusterDisConnected
 	}
-
-	if reflect.DeepEqual(status.Nodes, nodes) {
-		klog.Infof("cluster %v nodes unnecessary update", clust.GetName())
-		return nil
+	if len(status.Nodes) != len(nodes) {
+		status.Nodes = nodes
+	} else {
+		for i, v := range status.Nodes {
+			nodes[i].DeepCopyInto(v)
+		}
 	}
-	status.Nodes = nodes
 	return nil
 }
 
@@ -321,15 +347,55 @@ func (c *Operate) pvcReclaim(clust *v1.Cluster) error {
 	return fmt.Errorf("wait delete volume")
 }
 
-func (c *Operate) ekshandler(clust *v1.Cluster) error {
+func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 	var (
-		spec = &clust.Spec
-		err  error
+		spec     = &clust.Spec
+		err      error
+		removecr bool
 	)
-
+	// if eks cluster has been deleted, next delete the releated cr resource
+	// (1): first check cr annotation key, if cr annotation has "eksPvcGCKey=true"
+	//      cluster controller will clean up resources those eks left
+	// (2): if clean up all resources successed, next remove eksPvcGCKey in cr annotation(
+	//      if cleaning up pvc successed, remove eksPvcGCKey) and then delete cr
+	// (3): if clean up resources failed, in next loop controller will continue delete those resources
+	//      Tips: controller will retry 3 times in cleaning up resources
 	if spec.ClusterID == "" {
 		klog.Errorf("not found cluster id on %s", clust.GetName())
 		return fmt.Errorf("not found cluster_id")
+	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		if removecr {
+			rerr = NewRemoveCrErr()
+		}
+	}()
+
+	c.mgmu.Lock()
+	_, ok := c.magnums[spec.ClusterID]
+	if !ok {
+		c.magnums[spec.ClusterID] = spec.Eks.DeepCopy()
+	}
+	neweks := c.magnums[spec.ClusterID]
+	if !neweks.Hadsync {
+		klog.Infof("%v not synced, skip", clust.Name)
+		c.mgmu.Unlock()
+		return nil
+	}
+	if neweks.EksClusterID == "" {
+		removecr = true
+		c.mgmu.Unlock()
+		return nil
+	}
+	if !reflect.DeepEqual(neweks, &spec.Eks) {
+		klog.Infof("eks copy from %v", neweks)
+		neweks.DeepCopyInto(&spec.Eks)
+	}
+	c.mgmu.Unlock()
+	if spec.Host != "" || spec.Host != spec.Eks.APIAddress {
+		spec.Host = spec.Eks.APIAddress
 	}
 	if _, ok := clust.Annotations[AnnotationPvcGcLabelKey]; ok {
 		// if annotaions gc key exist, means resource should delete by myself
@@ -337,34 +403,18 @@ func (c *Operate) ekshandler(clust *v1.Cluster) error {
 		klog.Infof("find annotaions label %v, start pvc reclaim", AnnotationPvcGcLabelKey)
 		err = c.pvcReclaim(clust)
 		if err == nil {
-			klog.Infof("delete pvc %v success", clust.Name)
+			klog.Infof("delete pvc in cluster %v success", clust.Name)
+			removecr = true
 			return nil
 		}
-		klog.Infof("delete pvc failed:%v", err)
+		klog.Errorf("delete pvc failed:%v", err)
 		return err
 	}
-	c.mgmu.Lock()
-	_, ok := c.magnums[spec.ClusterID]
-	if !ok {
-		c.magnums[spec.ClusterID] = spec.Eks.DeepCopy()
-	}
-	neweks := c.magnums[spec.ClusterID]
-	if spec.Eks != *neweks {
-		klog.Infof("eks copy from %v", neweks)
-		neweks.DeepCopyInto(&spec.Eks)
-	}
-	if spec.Host != "" || spec.Host != spec.Eks.APIAddress {
-		spec.Host = spec.Eks.APIAddress
-	}
-
-	klog.V(5).Infof("cluster %s,spec:%v", clust.Name, spec)
-	c.mgmu.Unlock()
 	if spec.Host == "" {
-		klog.Infof("%v not found apiaddress, try next", clust.Name)
+		klog.Infof("%v not found apiaddress, skip", clust.Name)
 		return nil
 	}
-	err = c.k8status(clust)
-	return err
+	return c.k8status(clust)
 }
 
 func (c *Operate) eoshandler(clust *v1.Cluster) error {
@@ -390,10 +440,6 @@ func (c *Operate) Process(clust *v1.Cluster, nsname string) error {
 				c.nsnameSpec[nsname] = newspec
 			}
 		}
-		_, ok := clust.Annotations[AnnotationPvcGcLabelKey]
-		if err == nil && ok {
-			return NewRemoveCrErr()
-		}
 	case v1.ClusterEOS:
 		err = c.eoshandler(clust)
 	default:
@@ -401,7 +447,7 @@ func (c *Operate) Process(clust *v1.Cluster, nsname string) error {
 	}
 
 	updateCondition(status, err)
-	return nil
+	return err
 }
 
 func (c *Operate) Delete(nsname string) {

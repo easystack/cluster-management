@@ -77,7 +77,6 @@ func (c *Client) update() (rerr error) {
 			return err
 		}
 	}
-	klog.V(3).Infof("start list nodes on host:%v", c.host)
 	for {
 		err = c.cli.List(c.ctx, &nodes)
 		if err != nil {
@@ -99,11 +98,15 @@ func (c *Client) update() (rerr error) {
 	defer c.mu.Unlock()
 	for _, node := range nodes.Items {
 		tmpnode.Name = node.Name
+		tmpnode.Arch = node.Status.NodeInfo.Architecture
+		tmpnode.Version = node.Status.NodeInfo.KubeletVersion
+
 		if _, ok := node.Labels[NodeLabelKeyMaster]; ok {
 			tmpnode.Role = v1.NodeRoleMaster
 		} else {
 			tmpnode.Role = v1.NodeRoleWorker
 		}
+
 		for _, cond := range node.Status.Conditions {
 			if cond.Type == corev1.NodeReady {
 				if cond.Status == corev1.ConditionTrue {
@@ -114,9 +117,11 @@ func (c *Client) update() (rerr error) {
 				break
 			}
 		}
-		oldnode, ok := c.nodes[tmpnode.Name]
-		if !ok || oldnode != tmpnode {
+		_, ok := c.nodes[tmpnode.Name]
+		if !ok {
 			c.nodes[tmpnode.Name] = tmpnode.DeepCopy()
+		} else {
+			tmpnode.DeepCopyInto(c.nodes[tmpnode.Name])
 		}
 	}
 	return nil

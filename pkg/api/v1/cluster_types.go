@@ -77,12 +77,15 @@ type ClusterSpec struct {
 }
 
 type EksSpec struct {
-	EksStatus    string `json:"eks_status,omitempty"`
-	EksReason    string `json:"eks_reason,omitempty"`
-	EksClusterID string `json:"eks_clusterid,omitempty"`
-	EksName      string `json:"eks_name,omitempty"`
-	APIAddress   string `json:"api_address,omitempty"`
-	EksStackID   string `json:"eks_stackid,omitempty"`
+	EksName          string            `json:"eks_name,omitempty"`
+	EksClusterID     string            `json:"eks_clusterid,omitempty"`
+	APIAddress       string            `json:"api_address,omitempty"`
+	EksStatus        string            `json:"eks_status,omitempty"`
+	EksReason        string            `json:"eks_reason,omitempty"`
+	EksStackID       string            `json:"eks_stackid,omitempty"`
+	EksHealthReasons map[string]string `json:"eks_health_reasons,omitempty"`
+
+	Hadsync bool `json:"-"`
 }
 
 // ClusterStatus defines the observed state of Cluster
