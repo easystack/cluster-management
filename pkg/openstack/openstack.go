@@ -57,13 +57,13 @@ func (or OpResource) String() string {
 func (or OpResource) ListPages(pv *gophercloud.ProviderClient) (pagination.Pager, error) {
 	switch or {
 	case Magnum:
-		cli, err := openstack.NewContainerInfraV1(pv, gophercloud.EndpointOpts{Region: "RegionOne"})
+		cli, err := openstack.NewContainerInfraV1(pv, gophercloud.EndpointOpts{})
 		if err != nil {
 			return pagination.Pager{}, err
 		}
 		return clusters.List(cli, clusters.ListOpts{}), nil
 	case Cinder:
-		cli, err := openstack.NewBlockStorageV2(pv, gophercloud.EndpointOpts{Region: "RegionOne"})
+		cli, err := openstack.NewBlockStorageV2(pv, gophercloud.EndpointOpts{})
 		if err != nil {
 			return pagination.Pager{}, err
 		}

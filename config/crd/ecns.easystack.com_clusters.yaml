@@ -44,7 +44,13 @@ spec:
                   type: string
                 eks_clusterid:
                   type: string
+                eks_health_reasons:
+                  additionalProperties:
+                    type: string
+                  type: object
                 eks_name:
+                  type: string
+                eks_reason:
                   type: string
                 eks_stackid:
                   type: string
