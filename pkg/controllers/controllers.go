@@ -52,8 +52,7 @@ func NewController(mgr ctrl.Manager, server *Operate) *Reconciler {
 
 func (r *Reconciler) probe(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1.Cluster{}).
-		Complete(r)
+		For(&v1.Cluster{}).Complete(r)
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

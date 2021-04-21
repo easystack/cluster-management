@@ -85,7 +85,8 @@ type EksSpec struct {
 	EksStackID       string            `json:"eks_stackid,omitempty"`
 	EksHealthReasons map[string]string `json:"eks_health_reasons,omitempty"`
 
-	Hadsync bool `json:"-"`
+	Hadsync bool   `json:"-"`
+	Version string `json:"-"`
 }
 
 // ClusterStatus defines the observed state of Cluster

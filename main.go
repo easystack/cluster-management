@@ -53,13 +53,13 @@ func main() {
 		nameSpace            string
 	)
 
-	flag.StringVar(&nameSpace, "resource-namespace", "eks", "The controller watch resources in which namespace")
+	flag.StringVar(&nameSpace, "namespace", "", "The controller watch resources in which namespace(default all)")
 	flag.StringVar(&metricsAddr, "metrics-addr", "0", "The address the metric endpoint binds to. default 0(means disable)")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
-	pollingPeriod := flag.Duration("polling-period", 5*time.Second, "The polling loop period.")
-	openstackPeriod := flag.Duration("openstack-period", 25*time.Second, "The polling loop period.")
-	syncdu := flag.Duration("sync-period", time.Second*30, "controller manager sync resource time duration")
+	pollingPeriod := flag.Duration("polling-period", 13*time.Second, "The polling loop period.")
+	openstackPeriod := flag.Duration("openstack-period", 23*time.Second, "The polling loop period.")
+	syncdu := flag.Duration("sync-period", 15*time.Second, "controller manager sync resource time duration")
 
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
@@ -76,7 +76,6 @@ func main() {
 		MetricsBindAddress: metricsAddr,
 		LeaderElection:     enableLeaderElection,
 		LeaderElectionID:   newleaderid,
-		Port:               0,
 		Namespace:          nameSpace,
 	})
 	if err != nil {

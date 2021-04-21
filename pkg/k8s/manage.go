@@ -98,6 +98,7 @@ func (s *Manage) LoopRun(ctx context.Context) {
 			klog.Errorf("ctx failed:%v", ctx.Err())
 			return
 		case <-time.NewTimer(s.du).C:
+			klog.V(3).Infof("start update k8s nodes")
 			s.mu.RLock()
 			defer s.mu.RUnlock()
 			for k, v := range s.cache {
@@ -122,6 +123,7 @@ func (s *Manage) LoopRun(ctx context.Context) {
 				}
 			}
 			wg.Wait()
+			klog.V(3).Infof("end update k8s nodes")
 		}
 	}
 }
