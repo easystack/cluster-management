@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -33,7 +34,16 @@ const (
 const (
 	AnnotationPvcGcLabelKey = "eks-resource-gc/pvc"
 	pvcSuffix               = "-dynamic-pvc-"
+
+	healthApiKey = "api"
+	ApiOk        = "ok"
 )
+
+type health struct {
+	num   ReadyNum
+	arch  string
+	nodes int
+}
 
 type RemoveCrErr int
 
@@ -100,7 +110,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 		if _, ok := c.magnums[clusterInfo.UUID]; !ok {
 			continue
 		}
-		klog.V(3).Infof("sync cluster %s, uuid:%v", clusterInfo.Name, clusterInfo.UUID)
+
 		c.opmg.WrapClient(func(pv *gophercloud.ProviderClient) {
 			cli, err := openstack.NewContainerInfraV1(pv, gophercloud.EndpointOpts{Region: "RegionOne"})
 			if err != nil {
@@ -121,13 +131,14 @@ func (c *Operate) mgFilter(page pagination.Page) {
 					klog.Errorf("get cluster failed:%v", err)
 					return
 				}
-				klog.V(5).Infof("find match cluster: %v", info)
+				klog.V(6).Infof("find match cluster: %v", info)
 				neweks.EksStatus = info.Status
 				neweks.EksReason = info.StatusReason
 				neweks.EksClusterID = info.UUID
 				neweks.EksName = info.Name
 				neweks.APIAddress = info.APIAddress
 				neweks.EksStackID = info.StackID
+				neweks.Version = info.COEVersion
 				if info.HealthStatusReason != nil {
 					for k, v := range info.HealthStatusReason {
 						if s, ok := v.(string); ok {
@@ -140,17 +151,12 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				neweks.DeepCopyInto(c.magnums[id])
 			})
 		})
-
 	}
 	wg.Wait()
 	for _, v := range c.magnums {
 		if !v.Hadsync {
-			v.EksStatus = ""
-			v.EksReason = ""
+			// EksClusterID will be used to check exist or not!
 			v.EksClusterID = ""
-			v.EksName = ""
-			v.APIAddress = ""
-			v.EksStackID = ""
 			v.EksHealthReasons = nil
 			v.Hadsync = true
 		}
@@ -266,54 +272,67 @@ func (s *Operate) NeedLeaderElection() bool {
 }
 
 //sync status node, ClusterStatus
-func (c *Operate) k8status(clust *v1.Cluster) error {
+func (c *Operate) k8status(clust *v1.Cluster) ([]*v1.Node, error) {
 	var (
-		spec   = &clust.Spec
-		status = &clust.Status
-		err    error
+		host = clust.Spec.Host
+		err  error
 	)
-	if spec.Host == "" {
+	if host == "" {
 		klog.Errorf("not found spec.host on %s", clust.GetName())
-		return fmt.Errorf("not found host")
+		return nil, fmt.Errorf("not found host")
 	}
-	cli, err := c.k8mg.Get(spec.Host)
+	cli, err := c.k8mg.Get(host)
 	if err != nil {
 		klog.Errorf("get k8s client failed:%v", err)
-		return err
+		return nil, err
 	}
 	if !cli.HadSyncd() {
 		klog.Infof("k8s client not synced on %v", clust.GetName())
-		return nil
+		return nil, nil
 	}
 	nodes, nerr := cli.Nodes()
 	if nerr != nil {
 		klog.Errorf("get nodes failed:%v", nerr)
-		return nerr
+		return nil, nerr
 	}
 	if len(nodes) == 0 {
 		klog.Infof("get nodes length is zero, should not be here")
-		return nil
+		return nil, nil
 	}
-	spec.Nodes = len(nodes)
-	if spec.Version == "" {
-		for _, no := range nodes {
-			if no.Version != "" {
-				spec.Version = nodes[0].Version
-				spec.Architecture = nodes[0].Arch
-				break
-			}
-		}
+	reOrderNodes(nodes)
+	return nodes, nil
+}
+
+func (c *Operate) handler(clust *v1.Cluster) error {
+	var (
+		status          = &clust.Status
+		spec            = &clust.Spec
+		ready, notready int
+	)
+	nodes, err := c.k8status(clust)
+	if err != nil {
+		return err
 	}
 
-	readykey := reOrderNodes(nodes)
-	switch readykey {
-	case SomeReady:
-		status.ClusterStatus = v1.ClusterWarning
-	case AllReady:
-		status.ClusterStatus = v1.ClusterHealthy
-	case AllNotReady:
-		status.ClusterStatus = v1.ClusterDisConnected
+	if len(nodes) == 0 {
+		return nil
 	}
+
+	status.ClusterStatus = v1.ClusterDisConnected
+
+	for _, no := range nodes {
+		switch no.Status {
+		case v1.NodeStatReady:
+			ready++
+		case v1.NodeStatNotReady:
+			notready++
+		}
+	}
+	status.ClusterStatus = v1.ClusterWarning
+	if notready == 0 {
+		status.ClusterStatus = v1.ClusterHealthy
+	}
+
 	if len(status.Nodes) != len(nodes) {
 		status.Nodes = nodes
 	} else {
@@ -321,11 +340,14 @@ func (c *Operate) k8status(clust *v1.Cluster) error {
 			nodes[i].DeepCopyInto(v)
 		}
 	}
-	return nil
-}
+	spec.Nodes = len(nodes)
+	for _, no := range nodes {
+		spec.Architecture = no.Arch
+		spec.Version = no.Version
+		break
+	}
 
-func (c *Operate) ehoshandler(clust *v1.Cluster) error {
-	return c.k8status(clust)
+	return nil
 }
 
 func (c *Operate) pvcReclaim(clust *v1.Cluster) error {
@@ -350,6 +372,7 @@ func (c *Operate) pvcReclaim(clust *v1.Cluster) error {
 func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 	var (
 		spec     = &clust.Spec
+		status   = &clust.Status
 		err      error
 		removecr bool
 	)
@@ -394,9 +417,22 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		neweks.DeepCopyInto(&spec.Eks)
 	}
 	c.mgmu.Unlock()
-	if spec.Host != "" || spec.Host != spec.Eks.APIAddress {
-		spec.Host = spec.Eks.APIAddress
+	health := parseMagnumHealths(neweks.EksHealthReasons)
+	if health != nil {
+		spec.Nodes = health.nodes
+		spec.Architecture = health.arch
+		switch health.num {
+		case SomeReady:
+			status.ClusterStatus = v1.ClusterWarning
+		case AllReady:
+			status.ClusterStatus = v1.ClusterHealthy
+		case AllNotReady:
+			status.ClusterStatus = v1.ClusterDisConnected
+		}
 	}
+
+	spec.Host = spec.Eks.APIAddress
+
 	if _, ok := clust.Annotations[AnnotationPvcGcLabelKey]; ok {
 		// if annotaions gc key exist, means resource should delete by myself
 		//(TODO) whether it's or not correct design, but should forward compatible
@@ -414,11 +450,15 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		klog.Infof("%v not found apiaddress, skip", clust.Name)
 		return nil
 	}
-	return c.k8status(clust)
+	return c.handler(clust)
+}
+
+func (c *Operate) ehoshandler(clust *v1.Cluster) error {
+	return c.handler(clust)
 }
 
 func (c *Operate) eoshandler(clust *v1.Cluster) error {
-	return c.k8status(clust)
+	return c.handler(clust)
 }
 
 func (c *Operate) Process(clust *v1.Cluster, nsname string) error {
@@ -465,31 +505,12 @@ func (c *Operate) Delete(nsname string) {
 	c.cindermu.Unlock()
 }
 
-func reOrderNodes(nodes []*v1.Node) ReadyNum {
-	var (
-		ready    int
-		notready int
-	)
+func reOrderNodes(nodes []*v1.Node) {
 	if len(nodes) == 0 {
-		return AllNotReady
+		return
 	}
 	nos := sorts(nodes)
 	sort.Sort(nos)
-	for _, no := range nodes {
-		switch no.Status {
-		case v1.NodeStatReady:
-			ready++
-		case v1.NodeStatNotReady:
-			notready++
-		}
-	}
-	if notready == 0 {
-		if ready != 0 {
-			return AllReady
-		}
-		return AllNotReady
-	}
-	return SomeReady
 }
 
 func updateCondition(stat *v1.ClusterStatus, err error) {
@@ -505,4 +526,41 @@ func updateCondition(stat *v1.ClusterStatus, err error) {
 		LastUpdateTime: time.Now().Format(time.RFC3339),
 		Reason:         err.Error(),
 	})
+}
+
+func parseMagnumHealths(mm map[string]string) *health {
+	var (
+		nodecount int
+		ready     int
+		notready  int
+		num       ReadyNum = SomeReady
+	)
+	for k, v := range mm {
+		if k == healthApiKey {
+			if v != ApiOk {
+				return &health{
+					num: AllNotReady,
+				}
+			}
+			continue
+		}
+		nodecount++
+		if v == "True" {
+			ready++
+		} else {
+			notready++
+		}
+	}
+	if notready == 0 {
+		if ready != 0 {
+			num = AllReady
+		}
+		num = AllNotReady
+	}
+
+	return &health{
+		num:   num,
+		arch:  runtime.GOARCH,
+		nodes: nodecount,
+	}
 }
