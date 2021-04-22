@@ -124,7 +124,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				id = clusterInfo.UUID
 			)
 			wg.Add(1)
-			utils.Submit(func() {
+			err = utils.Submit(func() {
 				defer wg.Done()
 				info, err := clusters.Get(cli, id).Extract()
 				if err != nil {
@@ -150,6 +150,12 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				klog.Infof("update cluster: %v", neweks)
 				neweks.DeepCopyInto(c.magnums[id])
 			})
+			if err != nil {
+				wg.Done()
+				neweks.Hadsync = true
+				klog.Errorf("submit task cluster show failed:%v", err)
+				neweks.EksHealthReasons[healthApiKey] = "submit task failed"
+			}
 		})
 	}
 	wg.Wait()
@@ -212,7 +218,7 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 		)
 		wg.Add(1)
 		copy(newids, ids)
-		utils.Submit(func() {
+		err = utils.Submit(func() {
 			wg.Done()
 			newcinder.sync = true
 			c.opmg.WrapClient(func(pv *gophercloud.ProviderClient) {
@@ -222,7 +228,7 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 					return
 				} else {
 					//will try delete all cinder
-					for _, volumeid := range ids {
+					for _, volumeid := range newids {
 						err = volumes.Delete(cli, volumeid, volumes.DeleteOpts{}).ExtractErr()
 						if err != nil {
 							errBuf.WriteString(err.Error())
@@ -236,6 +242,11 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 			c.cinders[newid] = newcinder
 			utils.PutBuf(errBuf)
 		})
+		if err != nil {
+			wg.Done()
+			newcinder.status = fmt.Errorf("submit task failed")
+			newcinder.sync = true
+		}
 	}
 
 	//not found means volume had deleted
@@ -317,9 +328,7 @@ func (c *Operate) handler(clust *v1.Cluster) error {
 	if len(nodes) == 0 {
 		return nil
 	}
-
 	status.ClusterStatus = v1.ClusterDisConnected
-
 	for _, no := range nodes {
 		switch no.Status {
 		case v1.NodeStatReady:
@@ -396,6 +405,19 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		}
 	}()
 
+	if _, ok := clust.Annotations[AnnotationPvcGcLabelKey]; ok {
+		// if annotaions gc key exist, means resource should delete by myself
+		//(TODO) whether it's or not correct design, but should forward compatible
+		klog.Infof("find annotaions label %v, start pvc reclaim", AnnotationPvcGcLabelKey)
+		err = c.pvcReclaim(clust)
+		if err != nil {
+			klog.Errorf("delete pvc failed:%v", err)
+			return err
+		}
+		klog.Infof("delete pvc in cluster %v success", clust.Name)
+		removecr = true
+		return nil
+	}
 	c.mgmu.Lock()
 	_, ok := c.magnums[spec.ClusterID]
 	if !ok {
@@ -407,6 +429,7 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		c.mgmu.Unlock()
 		return nil
 	}
+	neweks.Hadsync = false
 	if neweks.EksClusterID == "" {
 		removecr = true
 		c.mgmu.Unlock()
@@ -433,19 +456,6 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 
 	spec.Host = spec.Eks.APIAddress
 
-	if _, ok := clust.Annotations[AnnotationPvcGcLabelKey]; ok {
-		// if annotaions gc key exist, means resource should delete by myself
-		//(TODO) whether it's or not correct design, but should forward compatible
-		klog.Infof("find annotaions label %v, start pvc reclaim", AnnotationPvcGcLabelKey)
-		err = c.pvcReclaim(clust)
-		if err == nil {
-			klog.Infof("delete pvc in cluster %v success", clust.Name)
-			removecr = true
-			return nil
-		}
-		klog.Errorf("delete pvc failed:%v", err)
-		return err
-	}
 	if spec.Host == "" {
 		klog.Infof("%v not found apiaddress, skip", clust.Name)
 		return nil
@@ -552,10 +562,10 @@ func parseMagnumHealths(mm map[string]string) *health {
 		}
 	}
 	if notready == 0 {
+		num = AllNotReady
 		if ready != 0 {
 			num = AllReady
 		}
-		num = AllNotReady
 	}
 
 	return &health{
