@@ -59,7 +59,7 @@ func main() {
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	pollingPeriod := flag.Duration("polling-period", 13*time.Second, "The polling loop period.")
 	openstackPeriod := flag.Duration("openstack-period", 23*time.Second, "The polling loop period.")
-	syncdu := flag.Duration("sync-period", 15*time.Second, "controller manager sync resource time duration")
+	syncdu := flag.Duration("sync-period", 30*time.Second, "controller manager sync resource time duration")
 
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
