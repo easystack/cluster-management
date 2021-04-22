@@ -138,7 +138,6 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				neweks.EksName = info.Name
 				neweks.APIAddress = info.APIAddress
 				neweks.EksStackID = info.StackID
-				neweks.Version = info.COEVersion
 				if info.HealthStatusReason != nil {
 					for k, v := range info.HealthStatusReason {
 						if s, ok := v.(string); ok {
@@ -248,7 +247,7 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 			newcinder.sync = true
 		}
 	}
-
+	wg.Wait()
 	//not found means volume had deleted
 	for _, rmv := range c.cinders {
 		if !rmv.sync {
@@ -256,6 +255,7 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 			rmv.sync = true
 		}
 	}
+
 }
 
 func NewCluster(k8mg *k8s.Manage, opmg *oppkg.OpenMgr, enableLeader bool) *Operate {
@@ -266,6 +266,7 @@ func NewCluster(k8mg *k8s.Manage, opmg *oppkg.OpenMgr, enableLeader bool) *Opera
 		magnums:      make(map[string]*v1.EksSpec),
 		nsnameSpec:   make(map[string]*v1.ClusterSpec),
 		enableLeader: enableLeader,
+		cinders:      make(map[string]*removeCinder),
 	}
 	opmg.Regist(oppkg.Magnum, op.mgFilter)
 	opmg.Regist(oppkg.Cinder, op.cinderDeleteFn)
