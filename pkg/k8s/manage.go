@@ -100,7 +100,6 @@ func (s *Manage) LoopRun(ctx context.Context) {
 		case <-time.NewTimer(s.du).C:
 			klog.V(3).Infof("start update k8s nodes")
 			s.mu.RLock()
-			defer s.mu.RUnlock()
 			for k, v := range s.cache {
 				var (
 					tmpk   = k
@@ -119,9 +118,11 @@ func (s *Manage) LoopRun(ctx context.Context) {
 					}
 				})
 				if err != nil {
-					klog.Errorf("submit task fail:%v", err)
+					klog.Errorf("submit k8s task fail:%v", err)
+					wg.Done()
 				}
 			}
+			s.mu.RUnlock()
 			wg.Wait()
 			klog.V(3).Infof("end update k8s nodes")
 		}
@@ -136,6 +137,7 @@ func (s *Manage) Del(host string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	klog.Infof("delete cache on host %v", newh)
 	delete(s.cache, newh)
 }
 
