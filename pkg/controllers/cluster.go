@@ -440,6 +440,9 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		klog.Infof("eks copy from %v", neweks)
 		neweks.DeepCopyInto(&spec.Eks)
 	}
+	//(TODO) have to set clusterstatus, when default
+	// handler do not update status as connect refused
+	status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
 	c.mgmu.Unlock()
 	health := parseMagnumHealths(neweks.EksHealthReasons)
 	if health != nil {
