@@ -440,23 +440,17 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		klog.Infof("eks copy from %v", neweks)
 		neweks.DeepCopyInto(&spec.Eks)
 	}
-	//(TODO) have to set clusterstatus, when default
-	// handler do not update status as connect refused
-	status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
 	c.mgmu.Unlock()
 	health := parseMagnumHealths(neweks.EksHealthReasons)
 	if health != nil {
 		spec.Nodes = health.nodes
 		spec.Architecture = health.arch
-		switch health.num {
-		case SomeReady:
-			status.ClusterStatus = v1.ClusterWarning
-		case AllReady:
-			status.ClusterStatus = v1.ClusterHealthy
-		case AllNotReady:
-			status.ClusterStatus = v1.ClusterDisConnected
-		}
+		//(TODO) the magnum bug, when cluster delete failed.
+		// the number is also ok and ready
 	}
+	//(TODO) have to set clusterstatus, when connect refused
+	// handler do not update status, so update now
+	status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
 
 	spec.Host = spec.Eks.APIAddress
 
