@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -323,6 +324,7 @@ func (c *Operate) handler(clust *v1.Cluster) error {
 	)
 	nodes, err := c.k8status(clust)
 	if err != nil {
+		status.ClusterStatus = v1.ClusterDisConnected
 		return err
 	}
 
@@ -448,9 +450,6 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		//(TODO) the magnum bug, when cluster delete failed.
 		// the number is also ok and ready
 	}
-	//(TODO) have to set clusterstatus, when connect refused
-	// handler do not update status, so update now
-	status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
 
 	spec.Host = spec.Eks.APIAddress
 
@@ -458,7 +457,16 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		klog.Infof("%v not found apiaddress, skip", clust.Name)
 		return nil
 	}
-	return c.handler(clust)
+	err = c.handler(clust)
+	if err != nil {
+		return err
+	}
+	if !strings.HasSuffix(neweks.EksStatus, "COMPLETE") {
+		//(TODO) have to set clusterstatus, when connect refused
+		// handler do not update status, so update now
+		status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
+	}
+	return nil
 }
 
 func (c *Operate) ehoshandler(clust *v1.Cluster) error {
