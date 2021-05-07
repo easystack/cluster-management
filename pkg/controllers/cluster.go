@@ -109,12 +109,14 @@ func (c *Operate) mgFilter(page pagination.Page) {
 
 	for _, clusterInfo := range infos {
 		if _, ok := c.magnums[clusterInfo.UUID]; !ok {
+			klog.Infof("cluster info %s is not found in cache", clusterInfo.Name)
 			continue
 		}
 
 		c.opmg.WrapClient(func(pv *gophercloud.ProviderClient) {
 			cli, err := openstack.NewContainerInfraV1(pv, gophercloud.EndpointOpts{Region: "RegionOne"})
 			if err != nil {
+				// TODO: if error occurs, CR will be deleted unexpectedly.
 				klog.Errorf("create client failed:%v", err)
 				return
 			}
@@ -129,7 +131,12 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				defer wg.Done()
 				info, err := clusters.Get(cli, id).Extract()
 				if err != nil {
-					klog.Errorf("get cluster failed:%v", err)
+					if _, ok := err.(gophercloud.ErrDefault404); ok {
+						klog.Infof("cluster %s is not found: %v", id, err)
+						return
+					}
+					c.magnums[id].Hadsync = true
+					klog.Errorf("get cluster failed: %v", err)
 					return
 				}
 				klog.V(6).Infof("find match cluster: %v", info)
@@ -152,15 +159,16 @@ func (c *Operate) mgFilter(page pagination.Page) {
 			})
 			if err != nil {
 				wg.Done()
-				neweks.Hadsync = true
+				c.magnums[id].Hadsync = true
 				klog.Errorf("submit task cluster show failed:%v", err)
-				neweks.EksHealthReasons[healthApiKey] = "submit task failed"
+				c.magnums[id].EksHealthReasons[healthApiKey] = "submit task failed"
 			}
 		})
 	}
 	wg.Wait()
 	for _, v := range c.magnums {
 		if !v.Hadsync {
+			klog.Infof("%s had sync failed", v.EksName)
 			// EksClusterID will be used to check exist or not!
 			v.EksClusterID = ""
 			v.EksHealthReasons = nil
