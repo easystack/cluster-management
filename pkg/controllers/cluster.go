@@ -426,8 +426,7 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 			return err
 		}
 		klog.Infof("delete pvc in cluster %v success", clust.Name)
-		removecr = true
-		return nil
+		delete(clust.Annotations, AnnotationPvcGcLabelKey)
 	}
 	c.mgmu.Lock()
 	_, ok := c.magnums[spec.ClusterID]
