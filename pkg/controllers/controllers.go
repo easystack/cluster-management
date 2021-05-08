@@ -105,6 +105,10 @@ func (r *Reconciler) doUpdateVmCrdStatus(nsname types.NamespacedName, newcl *v1.
 			klog.Errorf("get object %s failed:%v", nsname.String(), err)
 			return err
 		}
+		if !reflect.DeepEqual(original.Annotations, newcl.Annotations) {
+			original.Annotations = newcl.Annotations
+			isup = true
+		}
 		if !reflect.DeepEqual(original.Spec, newcl.Spec) {
 			newcl.Spec.DeepCopyInto(&original.Spec)
 			isup = true
