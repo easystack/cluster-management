@@ -62,9 +62,8 @@ func newClient(fn getClientFn, host string) *Client {
 
 func (c *Client) update() (rerr error) {
 	var (
-		nodes   corev1.NodeList
-		err     error
-		tmpnode = &v1.Node{}
+		nodes corev1.NodeList
+		err   error
 	)
 	defer func() {
 		c.synced = true
@@ -97,6 +96,7 @@ func (c *Client) update() (rerr error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, node := range nodes.Items {
+		tmpnode := &v1.Node{}
 		tmpnode.Name = node.Name
 		tmpnode.Arch = node.Status.NodeInfo.Architecture
 		tmpnode.Version = node.Status.NodeInfo.KubeletVersion
@@ -117,6 +117,16 @@ func (c *Client) update() (rerr error) {
 				break
 			}
 		}
+
+		for _, address := range node.Status.Addresses {
+			if address.Type == corev1.NodeInternalIP {
+				tmpnode.InternalIP = address.Address
+			}
+			if address.Type == corev1.NodeExternalIP {
+				tmpnode.ExternalIP = address.Address
+			}
+		}
+
 		_, ok := c.nodes[tmpnode.Name]
 		if !ok {
 			c.nodes[tmpnode.Name] = tmpnode.DeepCopy()

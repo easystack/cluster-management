@@ -93,6 +93,7 @@ type ClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 	ClusterStatus       ClusterStat `json:"cluster_status,omitempty"`
+	ClusterInfo         ClusterInfo `json:"clusterInfo,omitempty"`
 	Nodes               []*Node     `json:"nodes,omitempty"`
 	ClusterStatusReason []string    `json:"cluster_status_reason,omitempty"`
 
@@ -105,12 +106,18 @@ type Condition struct {
 	Reason         string `json:"reason,omitempty"`
 }
 
+type ClusterInfo struct {
+	FloatingIP string `json:"floatingIP,omitempty"`
+}
+
 type Node struct {
-	Name    string   `json:"node_name,omitempty"`
-	Role    NodeRole `json:"node_role,omitempty"`
-	Status  NodeStat `json:"node_status,omitempty"`
-	Version string   `json:"version,omitempty"`
-	Arch    string   `json:"arch,omitempty"`
+	Name       string   `json:"node_name,omitempty"`
+	Role       NodeRole `json:"node_role,omitempty"`
+	Status     NodeStat `json:"node_status,omitempty"`
+	Version    string   `json:"version,omitempty"`
+	Arch       string   `json:"arch,omitempty"`
+	InternalIP string   `json:"internalIP,omitempty"`
+	ExternalIP string   `json:"externalIP,omitempty"`
 }
 
 // +kubebuilder:object:root=true
