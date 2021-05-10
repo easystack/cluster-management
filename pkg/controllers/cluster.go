@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"reflect"
 	"runtime"
 	"sort"
@@ -353,6 +354,12 @@ func (c *Operate) handler(clust *v1.Cluster) error {
 		status.ClusterStatus = v1.ClusterHealthy
 	}
 
+	if host, err := parseHostname(spec.Host); err == nil {
+		status.ClusterInfo.FloatingIP = host
+	} else {
+		klog.Errorf("parse floating ip failed: %v", err)
+	}
+
 	if len(status.Nodes) != len(nodes) {
 		status.Nodes = nodes
 	} else {
@@ -586,4 +593,12 @@ func parseMagnumHealths(mm map[string]string) *health {
 		arch:  runtime.GOARCH,
 		nodes: nodecount,
 	}
+}
+
+func parseHostname(rawurl string) (string, error) {
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return "", err
+	}
+	return u.Hostname(), nil
 }
