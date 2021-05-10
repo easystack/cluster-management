@@ -147,6 +147,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				neweks.EksName = info.Name
 				neweks.APIAddress = info.APIAddress
 				neweks.EksStackID = info.StackID
+				neweks.CreationTimestamp = info.CreatedAt.Unix()
 				if info.HealthStatusReason != nil {
 					for k, v := range info.HealthStatusReason {
 						if s, ok := v.(string); ok {

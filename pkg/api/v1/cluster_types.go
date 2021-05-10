@@ -77,13 +77,14 @@ type ClusterSpec struct {
 }
 
 type EksSpec struct {
-	EksName          string            `json:"eks_name,omitempty"`
-	EksClusterID     string            `json:"eks_clusterid,omitempty"`
-	APIAddress       string            `json:"api_address,omitempty"`
-	EksStatus        string            `json:"eks_status,omitempty"`
-	EksReason        string            `json:"eks_reason,omitempty"`
-	EksStackID       string            `json:"eks_stackid,omitempty"`
-	EksHealthReasons map[string]string `json:"eks_health_reasons,omitempty"`
+	EksName           string            `json:"eks_name,omitempty"`
+	EksClusterID      string            `json:"eks_clusterid,omitempty"`
+	APIAddress        string            `json:"api_address,omitempty"`
+	EksStatus         string            `json:"eks_status,omitempty"`
+	EksReason         string            `json:"eks_reason,omitempty"`
+	EksStackID        string            `json:"eks_stackid,omitempty"`
+	CreationTimestamp int64             `json:"eks_creation_timestamp,omitempty"`
+	EksHealthReasons  map[string]string `json:"eks_health_reasons,omitempty"`
 
 	Hadsync bool `json:"-"`
 }
