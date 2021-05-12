@@ -218,6 +218,7 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 		}
 	}
 	for id, ids := range dels {
+		klog.Infof("There are %d volumes associated with the PVC under cluster %s need to be deleted", len(dels[id]), id)
 		var (
 			errBuf    = utils.GetBuf()
 			newcinder = &removeCinder{
@@ -387,14 +388,14 @@ func (c *Operate) pvcReclaim(clust *v1.Cluster) error {
 	v, ok := c.cinders[spec.ClusterID]
 	if !ok {
 		c.cinders[spec.ClusterID] = &removeCinder{}
-		return fmt.Errorf("wait delete volume")
+		return fmt.Errorf("wait delete volume under cluster %s", spec.ClusterID)
 	}
 	if v.sync {
 		//try delete again, util success
 		v.sync = false
 		return v.status
 	}
-	return fmt.Errorf("wait delete volume")
+	return fmt.Errorf("wait delete volume under cluster %s", spec.ClusterID)
 }
 
 func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
