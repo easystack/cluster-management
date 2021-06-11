@@ -2,20 +2,17 @@ package k8s
 
 import (
 	"context"
-	backoff2 "github.com/cenkalti/backoff/v4"
-	v1 "github.com/cluster-management/pkg/api/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/klog/v2"
-	cli "sigs.k8s.io/controller-runtime/pkg/client"
 	"sync"
 	"time"
+
+	v1 "github.com/cluster-management/pkg/api/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
+	cli "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	//TODO should not little than 2,
-	// when unauth, will auth and try again
-	defaultRetry = 2
+	defaultTimeout = 10 * time.Second
 	// master node key in node labels
 	NodeLabelKeyMaster = "node-role.kubernetes.io/master"
 )
@@ -38,8 +35,6 @@ type Client struct {
 	//key: nodename
 	nodes map[string]*v1.Node
 
-	backoff backoff2.BackOff
-
 	mu sync.RWMutex
 }
 
@@ -47,23 +42,22 @@ func newClient(fn getClientFn, host string) *Client {
 	if fn == nil {
 		panic("not define get client func")
 	}
-	backoff := backoff2.WithMaxRetries(backoff2.NewConstantBackOff(time.Millisecond*100), defaultRetry)
 
 	return &Client{
-		ctx:     context.Background(),
-		host:    host,
-		fn:      fn,
-		cli:     nil,
-		backoff: backoff,
-		nodes:   make(map[string]*v1.Node),
-		mu:      sync.RWMutex{},
+		ctx:   context.Background(),
+		host:  host,
+		fn:    fn,
+		cli:   nil,
+		nodes: make(map[string]*v1.Node),
+		mu:    sync.RWMutex{},
 	}
 }
 
 func (c *Client) update() (rerr error) {
 	var (
-		nodes corev1.NodeList
-		err   error
+		nodes  corev1.NodeList
+		err    error
+		hadnew bool
 	)
 	defer func() {
 		c.synced = true
@@ -73,19 +67,24 @@ func (c *Client) update() (rerr error) {
 	if c.cli == nil {
 		c.cli, err = c.fn()
 		if err != nil {
+			klog.Errorf("new client failed:%s", err)
 			return err
 		}
 	}
+	cctx, canclefn := context.WithTimeout(c.ctx, defaultTimeout)
+	defer canclefn()
 	for {
-		err = c.cli.List(c.ctx, &nodes)
+		err = c.cli.List(cctx, &nodes)
 		if err != nil {
 			//retry on any error, even if unauthorized
-			if !apierrs.IsUnauthorized(err) {
+			klog.Errorf("list node failed: %s", err)
+			if hadnew {
 				return err
 			}
-			klog.Infof("authorize again on host:%v", c.host)
+			hadnew = true
 			c.cli, err = c.fn()
 			if err != nil {
+				klog.Errorf("try new client failed:%s", err)
 				return err
 			}
 		} else {

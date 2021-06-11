@@ -110,7 +110,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 
 	for _, clusterInfo := range infos {
 		if _, ok := c.magnums[clusterInfo.UUID]; !ok {
-			klog.Infof("cluster info %s is not found in cache", clusterInfo.Name)
+			klog.Infof("%s is not in custom resource list", clusterInfo.Name)
 			continue
 		}
 
@@ -118,7 +118,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 			cli, err := openstack.NewContainerInfraV1(pv, gophercloud.EndpointOpts{Region: "RegionOne"})
 			if err != nil {
 				// TODO: if error occurs, CR will be deleted unexpectedly.
-				klog.Errorf("create client failed:%v", err)
+				klog.Errorf("create magnum client failed:%v", err)
 				return
 			}
 			var (
@@ -133,11 +133,11 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				info, err := clusters.Get(cli, id).Extract()
 				if err != nil {
 					if _, ok := err.(gophercloud.ErrDefault404); ok {
-						klog.Infof("cluster %s is not found: %v", id, err)
+						klog.Errorf("show cluster %s done, return 404 (not found)", id)
 						return
 					}
 					c.magnums[id].Hadsync = true
-					klog.Errorf("get cluster failed: %v", err)
+					klog.Errorf("show cluster %s failed: %v", id, err)
 					return
 				}
 				klog.V(6).Infof("find match cluster: %v", info)
@@ -170,7 +170,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 	wg.Wait()
 	for _, v := range c.magnums {
 		if !v.Hadsync {
-			klog.Infof("%s had sync failed", v.EksName)
+			klog.Errorf("cluster(%s) sync failed, cluster deleted or magnum server crash", v.EksClusterID)
 			// EksClusterID will be used to check exist or not!
 			v.EksClusterID = ""
 			v.EksHealthReasons = nil
@@ -207,13 +207,12 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 			buf.WriteString(id)
 			buf.WriteString(pvcSuffix)
 			if rmv.sync {
-				klog.Infof("volume with prefix %s had synced, skip", buf.String())
 				continue
 			}
 			if !bytes.HasPrefix(volname, buf.Bytes()) {
 				continue
 			}
-			klog.Infof("append delete volume %v on cluster id %v", volume.Name, id)
+			klog.Infof("append delete volume %v on cluster %v", volume.Name, id)
 			dels[id] = append(dels[id], volume.ID)
 		}
 	}
@@ -342,7 +341,7 @@ func (c *Operate) handler(clust *v1.Cluster) error {
 	if len(nodes) == 0 {
 		return nil
 	}
-	status.ClusterStatus = v1.ClusterDisConnected
+
 	for _, no := range nodes {
 		switch no.Status {
 		case v1.NodeStatReady:

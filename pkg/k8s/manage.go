@@ -36,10 +36,11 @@ var (
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		// Client.Timeout exceeded while awaiting headers
+		ResponseHeaderTimeout: 20 * time.Second,
+		// drive client close,
+		MaxIdleConnsPerHost:   -1,
+		TLSHandshakeTimeout:   5 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 )
