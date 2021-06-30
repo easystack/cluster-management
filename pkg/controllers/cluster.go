@@ -45,6 +45,7 @@ type health struct {
 	num   ReadyNum
 	arch  string
 	nodes int
+	apiok bool
 }
 
 type RemoveCrErr int
@@ -170,7 +171,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 	wg.Wait()
 	for _, v := range c.magnums {
 		if !v.Hadsync {
-			klog.Errorf("cluster(%s) sync failed, cluster deleted or magnum server crash", v.EksClusterID)
+			klog.Errorf("cluster %s sync failed, cluster deleted", v.EksClusterID)
 			// EksClusterID will be used to check exist or not!
 			v.EksClusterID = ""
 			v.EksHealthReasons = nil
@@ -328,31 +329,16 @@ func (c *Operate) k8status(clust *v1.Cluster) ([]*v1.Node, error) {
 
 func (c *Operate) handler(clust *v1.Cluster) error {
 	var (
-		status          = &clust.Status
-		spec            = &clust.Spec
-		ready, notready int
+		status = &clust.Status
+		spec   = &clust.Spec
 	)
 	nodes, err := c.k8status(clust)
 	if err != nil {
-		status.ClusterStatus = v1.ClusterDisConnected
 		return err
 	}
 
 	if len(nodes) == 0 {
 		return nil
-	}
-
-	for _, no := range nodes {
-		switch no.Status {
-		case v1.NodeStatReady:
-			ready++
-		case v1.NodeStatNotReady:
-			notready++
-		}
-	}
-	status.ClusterStatus = v1.ClusterWarning
-	if notready == 0 {
-		status.ClusterStatus = v1.ClusterHealthy
 	}
 
 	if host, err := parseHostname(spec.Host); err == nil {
@@ -368,7 +354,6 @@ func (c *Operate) handler(clust *v1.Cluster) error {
 			nodes[i].DeepCopyInto(v)
 		}
 	}
-	spec.Nodes = len(nodes)
 	for _, no := range nodes {
 		spec.Architecture = no.Arch
 		spec.Version = no.Version
@@ -420,7 +405,9 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 			return
 		}
 		if removecr {
-			rerr = NewRemoveCrErr()
+			if _, ok := clust.Annotations[AnnotationPvcGcLabelKey]; !ok {
+				rerr = NewRemoveCrErr()
+			}
 		}
 	}()
 
@@ -431,10 +418,10 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		err = c.pvcReclaim(clust)
 		if err != nil {
 			klog.Errorf("delete pvc failed:%v", err)
-			return err
+		} else {
+			klog.Infof("delete pvc in cluster %v success", clust.Name)
+			delete(clust.Annotations, AnnotationPvcGcLabelKey)
 		}
-		klog.Infof("delete pvc in cluster %v success", clust.Name)
-		delete(clust.Annotations, AnnotationPvcGcLabelKey)
 	}
 	c.mgmu.Lock()
 	_, ok := c.magnums[spec.ClusterID]
@@ -454,13 +441,25 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		return nil
 	}
 	if !reflect.DeepEqual(neweks, &spec.Eks) {
-		klog.Infof("eks copy from %v", neweks)
+		klog.Infof("copy eks info from magnum: %v", neweks)
 		neweks.DeepCopyInto(&spec.Eks)
 	}
 	c.mgmu.Unlock()
+	// magnum info is not correct
 	health := parseMagnumHealths(neweks.EksHealthReasons)
 	if health != nil {
 		spec.Nodes = health.nodes
+		switch health.num {
+		case AllNotReady:
+			status.ClusterStatus = v1.ClusterDisConnected
+		case AllReady:
+			status.ClusterStatus = v1.ClusterHealthy
+		case SomeReady:
+			status.ClusterStatus = v1.ClusterWarning
+		}
+		if !health.apiok {
+			status.ClusterStatus = v1.ClusterDisConnected
+		}
 		spec.Architecture = health.arch
 		//(TODO) the magnum bug, when cluster delete failed.
 		// the number is also ok and ready
@@ -474,7 +473,7 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 	}
 	err = c.handler(clust)
 	if err != nil {
-		return err
+		klog.Errorf("%v handler k8s failed: %v", clust.Name, err)
 	}
 	if !strings.HasSuffix(neweks.EksStatus, "COMPLETE") {
 		//(TODO) have to set clusterstatus, when connect refused
@@ -570,7 +569,8 @@ func parseMagnumHealths(mm map[string]string) *health {
 		if k == healthApiKey {
 			if v != ApiOk {
 				return &health{
-					num: AllNotReady,
+					apiok: false,
+					num:   AllNotReady,
 				}
 			}
 			continue
@@ -591,6 +591,7 @@ func parseMagnumHealths(mm map[string]string) *health {
 
 	return &health{
 		num:   num,
+		apiok: true,
 		arch:  runtime.GOARCH,
 		nodes: nodecount,
 	}
