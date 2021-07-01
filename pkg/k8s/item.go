@@ -133,6 +133,11 @@ func (c *Client) update() (rerr error) {
 			tmpnode.DeepCopyInto(c.nodes[tmpnode.Name])
 		}
 	}
+	for _, node := range nodes.Items {
+		if _, ok := c.nodes[node.Name]; !ok {
+			delete(c.nodes, node.Name)
+		}
+	}
 	return nil
 }
 
