@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/cluster-management/pkg/tag"
 	"net/url"
 	"reflect"
 	"runtime"
@@ -66,6 +67,7 @@ type removeCinder struct {
 type Operate struct {
 	k8mg         *k8s.Manage
 	opmg         *oppkg.OpenMgr
+	tagmg        *tag.TagMgr
 	enableLeader bool
 
 	nsnameSpec map[string]*v1.ClusterSpec
@@ -270,10 +272,11 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 
 }
 
-func NewCluster(k8mg *k8s.Manage, opmg *oppkg.OpenMgr, enableLeader bool) *Operate {
+func NewCluster(k8mg *k8s.Manage, opmg *oppkg.OpenMgr, tagmg *tag.TagMgr, enableLeader bool) *Operate {
 	op := &Operate{
 		k8mg:         k8mg,
 		opmg:         opmg,
+		tagmg:        tagmg,
 		mgmu:         sync.RWMutex{},
 		magnums:      make(map[string]*v1.EksSpec),
 		nsnameSpec:   make(map[string]*v1.ClusterSpec),
@@ -288,6 +291,7 @@ func NewCluster(k8mg *k8s.Manage, opmg *oppkg.OpenMgr, enableLeader bool) *Opera
 func (s *Operate) Start(ctx context.Context) error {
 	go s.k8mg.LoopRun(ctx)
 	s.opmg.Run()
+	s.tagmg.Run(ctx)
 	return nil
 }
 

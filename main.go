@@ -22,11 +22,12 @@ import (
 	"os"
 	"time"
 
+	tgpkg "github.com/cluster-management/pkg/tag"
+
 	ecnsv1 "github.com/cluster-management/pkg/api/v1"
 	"github.com/cluster-management/pkg/controllers"
 	"github.com/cluster-management/pkg/k8s"
 	oppkg "github.com/cluster-management/pkg/openstack"
-
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -51,14 +52,18 @@ func main() {
 		metricsAddr          string
 		enableLeaderElection bool
 		nameSpace            string
+		createTagUrl         string
 	)
 
 	flag.StringVar(&nameSpace, "namespace", "", "The controller watch resources in which namespace(default all)")
 	flag.StringVar(&metricsAddr, "metrics-addr", "0", "The address the metric endpoint binds to. default 0(means disable)")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
+	flag.StringVar(&createTagUrl, "createtagurl", "http://eks-dashboard-api.eks.svc.cluster.local/api/container_infra/create_tag/",
+		"The url in eks-dashboard-api for auto create tag")
 	pollingPeriod := flag.Duration("polling-period", 13*time.Second, "The polling loop period.")
 	openstackPeriod := flag.Duration("openstack-period", 23*time.Second, "The polling loop period.")
+	tagPeriod := flag.Duration("tag-period", 900*time.Second, "The polling loop period.")
 	syncdu := flag.Duration("sync-period", 30*time.Second, "controller manager sync resource time duration")
 
 	klog.InitFlags(flag.CommandLine)
@@ -82,7 +87,9 @@ func main() {
 		panic(err)
 	}
 
-	cluster := controllers.NewCluster(k8mg, openstackMg, enableLeaderElection)
+	tagmg := tgpkg.NewTagMgr(*tagPeriod, createTagUrl)
+
+	cluster := controllers.NewCluster(k8mg, openstackMg, tagmg, enableLeaderElection)
 	controllers.NewController(mgr, cluster)
 	err = mgr.Add(cluster)
 	if err != nil {
