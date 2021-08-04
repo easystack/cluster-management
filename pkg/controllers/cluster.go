@@ -111,7 +111,10 @@ func (c *Operate) mgFilter(page pagination.Page) {
 	c.mgmu.Lock()
 	defer c.mgmu.Unlock()
 
+	klog.Infof("fetch %d cluster info from magnum, %d record is found", len(infos), len(c.magnums))
+
 	for _, clusterInfo := range infos {
+		klog.Infof("start cluster %s %s sync", clusterInfo.Name, clusterInfo.UUID)
 		if _, ok := c.magnums[clusterInfo.UUID]; !ok {
 			klog.Infof("%s is not in custom resource list", clusterInfo.Name)
 			continue
@@ -173,7 +176,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 	wg.Wait()
 	for _, v := range c.magnums {
 		if !v.Hadsync {
-			klog.Errorf("cluster %s sync failed, cluster deleted", v.EksClusterID)
+			klog.Errorf("cluster %s %s sync failed, cluster deleted", v.EksName, v.EksClusterID)
 			// EksClusterID will be used to check exist or not!
 			v.EksClusterID = ""
 			v.EksHealthReasons = nil
