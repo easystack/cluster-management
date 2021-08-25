@@ -113,25 +113,19 @@ func (c *Operate) mgFilter(page pagination.Page) {
 
 	klog.Infof("fetch %d cluster info from magnum, %d record is found", len(infos), len(c.magnums))
 
-	for _, clusterInfo := range infos {
-		klog.Infof("start cluster %s %s sync", clusterInfo.Name, clusterInfo.UUID)
-		if _, ok := c.magnums[clusterInfo.UUID]; !ok {
-			klog.Infof("%s is not in custom resource list", clusterInfo.Name)
-			continue
+	c.opmg.WrapClient(func(pv *gophercloud.ProviderClient) {
+		cli, err := openstack.NewContainerInfraV1(pv, gophercloud.EndpointOpts{Region: "RegionOne"})
+		if err != nil {
+			klog.Errorf("create magnum client failed:%v", err)
+			return
 		}
-
-		c.opmg.WrapClient(func(pv *gophercloud.ProviderClient) {
-			cli, err := openstack.NewContainerInfraV1(pv, gophercloud.EndpointOpts{Region: "RegionOne"})
-			if err != nil {
-				// TODO: if error occurs, CR will be deleted unexpectedly.
-				klog.Errorf("create magnum client failed:%v", err)
-				return
-			}
+		for cid := range c.magnums {
+			klog.Infof("start cluster %s sync", cid)
 			var (
 				neweks = &v1.EksSpec{
 					EksHealthReasons: make(map[string]string),
 				}
-				id = clusterInfo.UUID
+				id = cid
 			)
 			wg.Add(1)
 			err = utils.Submit(func() {
@@ -139,10 +133,13 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				info, err := clusters.Get(cli, id).Extract()
 				if err != nil {
 					if _, ok := err.(gophercloud.ErrDefault404); ok {
-						klog.Errorf("show cluster %s done, return 404 (not found)", id)
+						klog.Infof("cluster %s is not found, cr will be deleted", id)
+						// EksSpec.EksClusterID will be used to check exist or not!
+						neweks.EksStatus = c.magnums[id].EksStatus
+						neweks.Hadsync = true
+						neweks.DeepCopyInto(c.magnums[id])
 						return
 					}
-					c.magnums[id].Hadsync = true
 					klog.Errorf("show cluster %s failed: %v", id, err)
 					return
 				}
@@ -162,27 +159,17 @@ func (c *Operate) mgFilter(page pagination.Page) {
 					}
 				}
 				neweks.Hadsync = true
-				klog.Infof("update cluster: %v", neweks)
 				neweks.DeepCopyInto(c.magnums[id])
+				klog.Infof("update cluster info successfully: %v", neweks)
 			})
 			if err != nil {
 				wg.Done()
-				c.magnums[id].Hadsync = true
 				klog.Errorf("submit task cluster show failed:%v", err)
 				c.magnums[id].EksHealthReasons[healthApiKey] = "submit task failed"
 			}
-		})
-	}
-	wg.Wait()
-	for _, v := range c.magnums {
-		if !v.Hadsync {
-			klog.Errorf("cluster %s %s sync failed, cluster deleted", v.EksName, v.EksClusterID)
-			// EksClusterID will be used to check exist or not!
-			v.EksClusterID = ""
-			v.EksHealthReasons = nil
-			v.Hadsync = true
 		}
-	}
+		wg.Wait()
+	})
 }
 
 func (c *Operate) cinderDeleteFn(page pagination.Page) {
@@ -440,13 +427,14 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		klog.Infof("%v not synced, skip", clust.Name)
 		c.mgmu.Unlock()
 		return nil
-	}
-	neweks.Hadsync = false
-	if neweks.EksClusterID == "" {
+	} else if neweks.EksClusterID == "" {
+		// only if eks cluster info has synced and cluster id
+		// has been cleaned, cr could be deleted.
 		removecr = true
 		c.mgmu.Unlock()
 		return nil
 	}
+	neweks.Hadsync = false
 	if !reflect.DeepEqual(neweks, &spec.Eks) {
 		klog.Infof("copy eks info from magnum: %v", neweks)
 		neweks.DeepCopyInto(&spec.Eks)
