@@ -151,11 +151,9 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				neweks.APIAddress = info.APIAddress
 				neweks.EksStackID = info.StackID
 				neweks.CreationTimestamp = info.CreatedAt.Unix()
-				if info.HealthStatusReason != nil {
-					for k, v := range info.HealthStatusReason {
-						if s, ok := v.(string); ok {
-							neweks.EksHealthReasons[k] = s
-						}
+				for k, v := range info.HealthStatusReason {
+					if s, ok := v.(string); ok {
+						neweks.EksHealthReasons[k] = s
 					}
 				}
 				neweks.Hadsync = true
@@ -440,24 +438,30 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		neweks.DeepCopyInto(&spec.Eks)
 	}
 	c.mgmu.Unlock()
-	// magnum info is not correct
-	health := parseMagnumHealths(neweks.EksHealthReasons)
-	if health != nil {
-		spec.Nodes = health.nodes
-		switch health.num {
-		case AllNotReady:
-			status.ClusterStatus = v1.ClusterDisConnected
-		case AllReady:
-			status.ClusterStatus = v1.ClusterHealthy
-		case SomeReady:
-			status.ClusterStatus = v1.ClusterWarning
+	if strings.HasSuffix(neweks.EksStatus, "COMPLETE") {
+		// magnum info is not correct
+		health := parseMagnumHealths(neweks.EksHealthReasons)
+		if health != nil {
+			spec.Nodes = health.nodes
+			switch health.num {
+			case AllNotReady:
+				status.ClusterStatus = v1.ClusterDisConnected
+			case AllReady:
+				status.ClusterStatus = v1.ClusterHealthy
+			case SomeReady:
+				status.ClusterStatus = v1.ClusterWarning
+			}
+			if !health.apiok {
+				status.ClusterStatus = v1.ClusterDisConnected
+			}
+			spec.Architecture = health.arch
+			//(TODO) the magnum bug, when cluster delete failed.
+			// the number is also ok and ready
 		}
-		if !health.apiok {
-			status.ClusterStatus = v1.ClusterDisConnected
-		}
-		spec.Architecture = health.arch
-		//(TODO) the magnum bug, when cluster delete failed.
-		// the number is also ok and ready
+	} else {
+		//(TODO) have to set clusterstatus, when connect refused
+		// handler do not update status, so update now
+		status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
 	}
 
 	spec.Host = spec.Eks.APIAddress
@@ -469,11 +473,6 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 	err = c.handler(clust)
 	if err != nil {
 		klog.Errorf("%v handler k8s failed: %v", clust.Name, err)
-	}
-	if !strings.HasSuffix(neweks.EksStatus, "COMPLETE") {
-		//(TODO) have to set clusterstatus, when connect refused
-		// handler do not update status, so update now
-		status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
 	}
 	return nil
 }
@@ -577,11 +576,18 @@ func parseMagnumHealths(mm map[string]string) *health {
 			notready++
 		}
 	}
-	if notready == 0 {
+	if nodecount == 0 {
+		// If nodecount is 0, it means mm from Magnum health_status_reason
+		// is empty. It shows that cluster just created may not start ready.
+		// health only show the status of a started cluster.
+		klog.Errorf("0 node info was found in magnum")
+		return nil
+	}
+	if ready == 0 && notready == nodecount {
 		num = AllNotReady
-		if ready != 0 {
-			num = AllReady
-		}
+	}
+	if notready == 0 && ready == nodecount {
+		num = AllReady
 	}
 
 	return &health{
