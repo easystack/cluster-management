@@ -20,14 +20,10 @@ spec:
       description: Cluster is the Schema for the clusters API
       properties:
         apiVersion:
-          description: 'APIVersion defines the versioned schema of this representation
-            of an object. Servers should convert recognized schemas to the latest
-            internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+          description: 'APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
           type: string
         kind:
-          description: 'Kind is a string value representing the REST resource this
-            object represents. Servers may infer this from the endpoint the client
-            submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+          description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
           type: string
         metadata:
           type: object
@@ -44,6 +40,9 @@ spec:
                   type: string
                 eks_clusterid:
                   type: string
+                eks_creation_timestamp:
+                  format: int64
+                  type: integer
                 eks_health_reasons:
                   additionalProperties:
                     type: string
@@ -58,8 +57,7 @@ spec:
                   type: string
               type: object
             host:
-              description: Host must be a host string, a host:port pair, or a URL
-                to the base of the apiserver.
+              description: Host must be a host string, a host:port pair, or a URL to the base of the apiserver.
               type: string
             nodes_count:
               type: integer
@@ -78,14 +76,17 @@ spec:
           description: ClusterStatus defines the observed state of Cluster
           properties:
             cluster_status:
-              description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
-                of cluster Important: Run "make" to regenerate code after modifying
-                this file'
+              description: 'INSERT ADDITIONAL STATUS FIELD - define observed state of cluster Important: Run "make" to regenerate code after modifying this file'
               type: string
             cluster_status_reason:
               items:
                 type: string
               type: array
+            clusterInfo:
+              properties:
+                floatingIP:
+                  type: string
+              type: object
             conditions:
               items:
                 properties:
@@ -101,6 +102,19 @@ spec:
               items:
                 properties:
                   arch:
+                    type: string
+                  capacity:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: ResourceList is a set of (resource name, quantity) pairs.
+                    type: object
+                  externalIP:
+                    type: string
+                  internalIP:
                     type: string
                   node_name:
                     type: string
