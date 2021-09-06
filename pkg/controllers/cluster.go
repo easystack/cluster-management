@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/cluster-management/pkg/license"
 	"github.com/cluster-management/pkg/tag"
 	"net/url"
 	"reflect"
@@ -43,10 +44,11 @@ const (
 )
 
 type health struct {
-	num   ReadyNum
-	arch  string
-	nodes int
-	apiok bool
+	num    ReadyNum
+	arch   string
+	nodes  int
+	apiok  bool
+	reason []string
 }
 
 type RemoveCrErr int
@@ -374,7 +376,7 @@ func (c *Operate) pvcReclaim(clust *v1.Cluster) error {
 	return fmt.Errorf("wait delete volume under cluster %s", spec.ClusterID)
 }
 
-func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
+func (c *Operate) ekshandler(clust *v1.Cluster, lic *license.License) (rerr error) {
 	var (
 		spec     = &clust.Spec
 		status   = &clust.Status
@@ -438,6 +440,8 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		neweks.DeepCopyInto(&spec.Eks)
 	}
 	c.mgmu.Unlock()
+	// clear the reasons
+	status.ClusterStatusReason = status.ClusterStatusReason[:0]
 	if strings.HasSuffix(neweks.EksStatus, "COMPLETE") {
 		// magnum info is not correct
 		health := parseMagnumHealths(neweks.EksHealthReasons)
@@ -455,6 +459,7 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 				status.ClusterStatus = v1.ClusterDisConnected
 			}
 			spec.Architecture = health.arch
+			status.ClusterStatusReason = append(status.ClusterStatusReason, health.reason...)
 			//(TODO) the magnum bug, when cluster delete failed.
 			// the number is also ok and ready
 		}
@@ -462,6 +467,14 @@ func (c *Operate) ekshandler(clust *v1.Cluster) (rerr error) {
 		//(TODO) have to set clusterstatus, when connect refused
 		// handler do not update status, so update now
 		status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
+		status.ClusterStatusReason = append(status.ClusterStatusReason, neweks.EksReason)
+	}
+	if lic != nil {
+		isIllegal, clusterStatusReason := lic.CheckNodes(status.Nodes)
+		if isIllegal {
+			status.ClusterStatus = v1.ClusterUnauthorized
+			status.ClusterStatusReason = clusterStatusReason
+		}
 	}
 
 	spec.Host = spec.Eks.APIAddress
@@ -485,7 +498,7 @@ func (c *Operate) eoshandler(clust *v1.Cluster) error {
 	return c.handler(clust)
 }
 
-func (c *Operate) Process(clust *v1.Cluster, nsname string) error {
+func (c *Operate) Process(clust *v1.Cluster, nsname string, lic *license.License) error {
 	var (
 		spec   = &clust.Spec
 		status = &clust.Status
@@ -496,7 +509,7 @@ func (c *Operate) Process(clust *v1.Cluster, nsname string) error {
 	case v1.ClusterEHOS:
 		err = c.ehoshandler(clust)
 	case v1.ClusterEKS:
-		err = c.ekshandler(clust)
+		err = c.ekshandler(clust, lic)
 		if spec.ClusterID != "" {
 			if _, ok := c.nsnameSpec[nsname]; !ok {
 				newspec := spec.DeepCopy()
@@ -554,17 +567,19 @@ func updateCondition(stat *v1.ClusterStatus, err error) {
 
 func parseMagnumHealths(mm map[string]string) *health {
 	var (
-		nodecount int
-		ready     int
-		notready  int
-		num       ReadyNum = SomeReady
+		nodecount    int
+		ready        int
+		notready     int
+		healthReason []string
+		num          ReadyNum = SomeReady
 	)
 	for k, v := range mm {
 		if k == healthApiKey {
 			if v != ApiOk {
 				return &health{
-					apiok: false,
-					num:   AllNotReady,
+					apiok:  false,
+					num:    AllNotReady,
+					reason: append(healthReason, v),
 				}
 			}
 			continue
@@ -574,6 +589,7 @@ func parseMagnumHealths(mm map[string]string) *health {
 			ready++
 		} else {
 			notready++
+			healthReason = append(healthReason, fmt.Sprintf("%s is %s", k, v))
 		}
 	}
 	if nodecount == 0 {
@@ -591,10 +607,11 @@ func parseMagnumHealths(mm map[string]string) *health {
 	}
 
 	return &health{
-		num:   num,
-		apiok: true,
-		arch:  runtime.GOARCH,
-		nodes: nodecount,
+		num:    num,
+		apiok:  true,
+		arch:   runtime.GOARCH,
+		nodes:  nodecount,
+		reason: healthReason,
 	}
 }
 

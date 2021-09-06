@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -54,6 +55,10 @@ const (
 	// if we can not connnect to cluster because some reason
 	// we will set cluster cr status to DISCONNECTED
 	ClusterDisConnected ClusterStat = "Disconnected"
+
+	// if some of nodes violate the License
+	// we will set cluster cr status to Unauthorized
+	ClusterUnauthorized ClusterStat = "Unauthorized"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -62,7 +67,7 @@ const (
 // ClusterSpec defines the desired state of Cluster
 type ClusterSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Important: Run "make generate" to regenerate code after modifying this file
 
 	// Host must be a host string, a host:port pair, or a URL to the base of the apiserver.
 	Host         string      `json:"host,omitempty"`
@@ -92,7 +97,7 @@ type EksSpec struct {
 // ClusterStatus defines the observed state of Cluster
 type ClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Important: Run "make generate" to regenerate code after modifying this file
 	ClusterStatus       ClusterStat `json:"cluster_status,omitempty"`
 	ClusterInfo         ClusterInfo `json:"clusterInfo,omitempty"`
 	Nodes               []*Node     `json:"nodes,omitempty"`
@@ -112,13 +117,14 @@ type ClusterInfo struct {
 }
 
 type Node struct {
-	Name       string   `json:"node_name,omitempty"`
-	Role       NodeRole `json:"node_role,omitempty"`
-	Status     NodeStat `json:"node_status,omitempty"`
-	Version    string   `json:"version,omitempty"`
-	Arch       string   `json:"arch,omitempty"`
-	InternalIP string   `json:"internalIP,omitempty"`
-	ExternalIP string   `json:"externalIP,omitempty"`
+	Name       string          `json:"node_name,omitempty"`
+	Role       NodeRole        `json:"node_role,omitempty"`
+	Status     NodeStat        `json:"node_status,omitempty"`
+	Version    string          `json:"version,omitempty"`
+	Arch       string          `json:"arch,omitempty"`
+	InternalIP string          `json:"internalIP,omitempty"`
+	ExternalIP string          `json:"externalIP,omitempty"`
+	Capacity   v1.ResourceList `json:"capacity,omitempty"`
 }
 
 // +kubebuilder:object:root=true

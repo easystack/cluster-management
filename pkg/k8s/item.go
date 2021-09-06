@@ -99,6 +99,7 @@ func (c *Client) update() (rerr error) {
 		tmpnode.Name = node.Name
 		tmpnode.Arch = node.Status.NodeInfo.Architecture
 		tmpnode.Version = node.Status.NodeInfo.KubeletVersion
+		tmpnode.Capacity = node.Status.Capacity
 
 		if _, ok := node.Labels[NodeLabelKeyMaster]; ok {
 			tmpnode.Role = v1.NodeRoleMaster

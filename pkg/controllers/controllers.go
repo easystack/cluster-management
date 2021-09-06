@@ -18,6 +18,9 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"github.com/cluster-management/pkg/license"
+	corev1 "k8s.io/api/core/v1"
 	"reflect"
 
 	v1 "github.com/cluster-management/pkg/api/v1"
@@ -58,11 +61,16 @@ func (r *Reconciler) probe(mgr ctrl.Manager) error {
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var (
 		vm     v1.Cluster
+		lic    *license.License
 		bctx   = context.Background()
 		err    error
 		nsname = req.NamespacedName.String()
 	)
 
+	lic, err = r.getLicense(req.NamespacedName)
+	if err != nil {
+		klog.Errorf("get License failed: %v", err)
+	}
 	err = r.Get(ctx, req.NamespacedName, &vm)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
@@ -79,7 +87,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		//if processs failed, should block
 		r.server.Delete(nsname)
 	} else {
-		err = r.server.Process(newvmobj, nsname)
+		err = r.server.Process(newvmobj, nsname, lic)
 		if _, ok := err.(RemoveCrErr); ok {
 			klog.Infof("start remove cr %v", nsname)
 			return ctrl.Result{}, r.Delete(bctx, &vm)
@@ -122,4 +130,18 @@ func (r *Reconciler) doUpdateVmCrdStatus(nsname types.NamespacedName, newcl *v1.
 		}
 		return nil
 	})
+}
+
+func (r *Reconciler) getLicense(nsname types.NamespacedName) (*license.License, error) {
+	configMap := &corev1.ConfigMap{}
+	nsname.Name = license.ConfigMapLicense
+
+	if err := r.Get(r.ctx, nsname, configMap); err != nil {
+		return nil, fmt.Errorf("get configMap %s failed: %v", nsname.Name, err)
+	}
+	lic, err := license.ReadFromConfigMap(configMap)
+	if err != nil {
+		return nil, err
+	}
+	return lic, nil
 }
