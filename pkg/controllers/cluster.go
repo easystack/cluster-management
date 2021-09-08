@@ -76,6 +76,8 @@ type Operate struct {
 	//key: clusterid
 	mgmu    sync.RWMutex
 	magnums map[string]*v1.EksSpec
+	// crRemoveDelayInterval should be greater than timeout that Magnum writes to the database
+	crRemoveDelayInterval time.Duration
 
 	//key: clusterid
 	cindermu sync.RWMutex
@@ -122,22 +124,35 @@ func (c *Operate) mgFilter(page pagination.Page) {
 			return
 		}
 		for cid := range c.magnums {
-			klog.Infof("start cluster %s sync", cid)
-			var (
-				neweks = &v1.EksSpec{
-					EksHealthReasons: make(map[string]string),
-				}
-				id = cid
-			)
+			id := cid
+
+			klog.Infof("start cluster %s sync", id)
 			wg.Add(1)
 			err = utils.Submit(func() {
 				defer wg.Done()
+				neweks := &v1.EksSpec{
+					EksHealthReasons: make(map[string]string),
+				}
 				info, err := clusters.Get(cli, id).Extract()
 				if err != nil {
 					if _, ok := err.(gophercloud.ErrDefault404); ok {
+						oldStatus := c.magnums[id].EksStatus
+						if oldStatus == "" {
+							timeNow := time.Now()
+							timestamp := c.magnums[id].ClusterNotFoundTimestamp
+							if timestamp.IsZero() {
+								timestamp, c.magnums[id].ClusterNotFoundTimestamp = timeNow, timeNow
+							}
+							klog.Errorf("%s has gone, %s in total, cluster %s sync failed", timeNow.Sub(timestamp), c.crRemoveDelayInterval, id)
+							if timestamp.Add(c.crRemoveDelayInterval).After(timeNow) {
+								return
+							}
+							// after crRemoveDelayInterval, it is also means Magnum writes
+							// to the database failed. cr will be deleted.
+						}
 						klog.Infof("cluster %s is not found, cr will be deleted", id)
 						// EksSpec.EksClusterID will be used to check exist or not!
-						neweks.EksStatus = c.magnums[id].EksStatus
+						neweks.EksStatus = oldStatus
 						neweks.Hadsync = true
 						neweks.DeepCopyInto(c.magnums[id])
 						return
@@ -262,16 +277,17 @@ func (c *Operate) cinderDeleteFn(page pagination.Page) {
 
 }
 
-func NewCluster(k8mg *k8s.Manage, opmg *oppkg.OpenMgr, tagmg *tag.TagMgr, enableLeader bool) *Operate {
+func NewCluster(k8mg *k8s.Manage, opmg *oppkg.OpenMgr, tagmg *tag.TagMgr, enableLeader bool, crRemoveDelay time.Duration) *Operate {
 	op := &Operate{
-		k8mg:         k8mg,
-		opmg:         opmg,
-		tagmg:        tagmg,
-		mgmu:         sync.RWMutex{},
-		magnums:      make(map[string]*v1.EksSpec),
-		nsnameSpec:   make(map[string]*v1.ClusterSpec),
-		enableLeader: enableLeader,
-		cinders:      make(map[string]*removeCinder),
+		k8mg:                  k8mg,
+		opmg:                  opmg,
+		tagmg:                 tagmg,
+		mgmu:                  sync.RWMutex{},
+		magnums:               make(map[string]*v1.EksSpec),
+		nsnameSpec:            make(map[string]*v1.ClusterSpec),
+		enableLeader:          enableLeader,
+		cinders:               make(map[string]*removeCinder),
+		crRemoveDelayInterval: crRemoveDelay,
 	}
 	opmg.Regist(oppkg.Magnum, op.mgFilter)
 	opmg.Regist(oppkg.Cinder, op.cinderDeleteFn)
@@ -469,7 +485,8 @@ func (c *Operate) ekshandler(clust *v1.Cluster, lic *license.License) (rerr erro
 		status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
 		status.ClusterStatusReason = append(status.ClusterStatusReason, neweks.EksReason)
 	}
-	if lic != nil {
+	// won't check license when cluster is in DELETE_XXX status
+	if lic != nil && !strings.HasPrefix(neweks.EksStatus, "DELETE") {
 		isIllegal, clusterStatusReason := lic.CheckNodes(status.Nodes)
 		if isIllegal {
 			status.ClusterStatus = v1.ClusterUnauthorized
