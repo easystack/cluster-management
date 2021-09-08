@@ -53,6 +53,7 @@ func main() {
 		enableLeaderElection bool
 		nameSpace            string
 		createTagUrl         string
+		crRemoveDelay        time.Duration
 	)
 
 	flag.StringVar(&nameSpace, "namespace", "", "The controller watch resources in which namespace(default all)")
@@ -61,10 +62,12 @@ func main() {
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&createTagUrl, "createtagurl", "http://eks-dashboard-api.eks.svc.cluster.local/api/container_infra/create_tag/",
 		"The url in eks-dashboard-api for auto create tag")
+	flag.DurationVar(&crRemoveDelay, "cr-remove-delay-interval", 30*time.Minute,
+		"Number of seconds after the cluster is not found in Magnum before CR is deleted")
 	pollingPeriod := flag.Duration("polling-period", 13*time.Second, "The polling loop period.")
 	openstackPeriod := flag.Duration("openstack-period", 23*time.Second, "The polling loop period.")
 	tagPeriod := flag.Duration("tag-period", 900*time.Second, "The polling loop period.")
-	syncdu := flag.Duration("sync-period", 30*time.Second, "controller manager sync resource time duration")
+	syncdu := flag.Duration("sync-period", 30*time.Second, "Controller manager sync resource time duration")
 
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
@@ -89,7 +92,7 @@ func main() {
 
 	tagmg := tgpkg.NewTagMgr(*tagPeriod, createTagUrl)
 
-	cluster := controllers.NewCluster(k8mg, openstackMg, tagmg, enableLeaderElection)
+	cluster := controllers.NewCluster(k8mg, openstackMg, tagmg, enableLeaderElection, crRemoveDelay)
 	controllers.NewController(mgr, cluster)
 	err = mgr.Add(cluster)
 	if err != nil {

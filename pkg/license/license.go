@@ -30,11 +30,11 @@ const (
 //  Memory_flavor: "8192"
 //  Nodes: "100"
 type License struct {
-	CPU          string `yaml:"CPU"`
+	CPU string `yaml:"CPU"`
 	// CPU Flavor, in cores.
-	CPUFlavor    string `yaml:"CPU_flavor"`
-	Clusters     string `yaml:"Clusters"`
-	Memory       string `yaml:"Memory"`
+	CPUFlavor string `yaml:"CPU_flavor"`
+	Clusters  string `yaml:"Clusters"`
+	Memory    string `yaml:"Memory"`
 	// Memory Flavor, in Mi, must be number.
 	MemoryFlavor string `yaml:"Memory_flavor"`
 	Nodes        string `yaml:"Nodes"`

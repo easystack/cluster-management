@@ -19,6 +19,7 @@ package v1
 import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"time"
 )
 
 type ClusterType string
@@ -92,6 +93,8 @@ type EksSpec struct {
 	EksHealthReasons  map[string]string `json:"eks_health_reasons,omitempty"`
 
 	Hadsync bool `json:"-"`
+	// ClusterNotFoundTimestamp record first time cluster is not found (404)
+	ClusterNotFoundTimestamp time.Time `json:"-"`
 }
 
 // ClusterStatus defines the observed state of Cluster
