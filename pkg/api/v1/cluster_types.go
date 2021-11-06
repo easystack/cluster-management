@@ -88,6 +88,7 @@ type EksSpec struct {
 	APIAddress        string            `json:"api_address,omitempty"`
 	EksStatus         string            `json:"eks_status,omitempty"`
 	EksReason         string            `json:"eks_reason,omitempty"`
+	EksFaults         map[string]string `json:"eks_faults,omitempty"`
 	EksStackID        string            `json:"eks_stackid,omitempty"`
 	CreationTimestamp int64             `json:"eks_creation_timestamp,omitempty"`
 	EksHealthReasons  map[string]string `json:"eks_health_reasons,omitempty"`
@@ -101,12 +102,17 @@ type EksSpec struct {
 type ClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make generate" to regenerate code after modifying this file
-	ClusterStatus       ClusterStat `json:"cluster_status,omitempty"`
-	ClusterInfo         ClusterInfo `json:"clusterInfo,omitempty"`
-	Nodes               []*Node     `json:"nodes,omitempty"`
-	ClusterStatusReason []string    `json:"cluster_status_reason,omitempty"`
+	ClusterStatus       ClusterStat         `json:"cluster_status,omitempty"`
+	ClusterInfo         ClusterInfo         `json:"clusterInfo,omitempty"`
+	Nodes               []*Node             `json:"nodes,omitempty"`
+	ClusterStatusReason ClusterStatusReason `json:"cluster_status_reason,omitempty"`
 
 	Conditions []*Condition `json:"conditions,omitempty"`
+}
+
+type ClusterStatusReason struct {
+	StatusReason string   `json:"status_reason,omitempty"`
+	Faults       []string `json:"faults,omitempty"`
 }
 
 type Condition struct {
