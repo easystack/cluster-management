@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/cluster-management/pkg/license"
 	"github.com/cluster-management/pkg/tag"
+	"github.com/cluster-management/pkg/utils/maps"
 	"net/url"
 	"reflect"
 	"runtime"
@@ -163,6 +164,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				klog.V(6).Infof("find match cluster: %v", info)
 				neweks.EksStatus = info.Status
 				neweks.EksReason = info.StatusReason
+				neweks.EksFaults = info.Faults
 				neweks.EksClusterID = info.UUID
 				neweks.EksName = info.Name
 				neweks.APIAddress = info.APIAddress
@@ -457,7 +459,7 @@ func (c *Operate) ekshandler(clust *v1.Cluster, lic *license.License) (rerr erro
 	}
 	c.mgmu.Unlock()
 	// clear the reasons
-	status.ClusterStatusReason = status.ClusterStatusReason[:0]
+	status.ClusterStatusReason = v1.ClusterStatusReason{}
 	if strings.HasSuffix(neweks.EksStatus, "COMPLETE") {
 		// magnum info is not correct
 		health := parseMagnumHealths(neweks.EksHealthReasons)
@@ -475,7 +477,8 @@ func (c *Operate) ekshandler(clust *v1.Cluster, lic *license.License) (rerr erro
 				status.ClusterStatus = v1.ClusterDisConnected
 			}
 			spec.Architecture = health.arch
-			status.ClusterStatusReason = append(status.ClusterStatusReason, health.reason...)
+			status.ClusterStatusReason.StatusReason = neweks.EksReason
+			status.ClusterStatusReason.Faults = append(status.ClusterStatusReason.Faults, health.reason...)
 			//(TODO) the magnum bug, when cluster delete failed.
 			// the number is also ok and ready
 		}
@@ -483,14 +486,16 @@ func (c *Operate) ekshandler(clust *v1.Cluster, lic *license.License) (rerr erro
 		//(TODO) have to set clusterstatus, when connect refused
 		// handler do not update status, so update now
 		status.ClusterStatus = v1.ClusterStat(neweks.EksStatus)
-		status.ClusterStatusReason = append(status.ClusterStatusReason, neweks.EksReason)
+		status.ClusterStatusReason.StatusReason = neweks.EksReason
+		status.ClusterStatusReason.Faults = append(status.ClusterStatusReason.Faults, maps.ToSlice(neweks.EksFaults)...)
 	}
 	// won't check license when cluster is in DELETE_XXX status
 	if lic != nil && !strings.HasPrefix(neweks.EksStatus, "DELETE") {
-		isIllegal, clusterStatusReason := lic.CheckNodes(status.Nodes)
+		isIllegal, faultReason := lic.CheckNodes(status.Nodes)
 		if isIllegal {
 			status.ClusterStatus = v1.ClusterUnauthorized
-			status.ClusterStatusReason = clusterStatusReason
+			status.ClusterStatusReason.StatusReason = "License Prohibited"
+			status.ClusterStatusReason.Faults = faultReason
 		}
 	}
 

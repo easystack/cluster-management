@@ -43,6 +43,10 @@ spec:
                 eks_creation_timestamp:
                   format: int64
                   type: integer
+                eks_faults:
+                  additionalProperties:
+                    type: string
+                  type: object
                 eks_health_reasons:
                   additionalProperties:
                     type: string
@@ -79,9 +83,14 @@ spec:
               description: 'INSERT ADDITIONAL STATUS FIELD - define observed state of cluster Important: Run "make generate" to regenerate code after modifying this file'
               type: string
             cluster_status_reason:
-              items:
-                type: string
-              type: array
+              properties:
+                faults:
+                  items:
+                    type: string
+                  type: array
+                status_reason:
+                  type: string
+              type: object
             clusterInfo:
               properties:
                 floatingIP:
