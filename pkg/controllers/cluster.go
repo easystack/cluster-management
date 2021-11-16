@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/cluster-management/pkg/license"
-	"github.com/cluster-management/pkg/tag"
-	"github.com/cluster-management/pkg/utils/maps"
 	"net/url"
 	"reflect"
 	"runtime"
@@ -14,6 +11,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cluster-management/pkg/license"
+	"github.com/cluster-management/pkg/tag"
+	"github.com/cluster-management/pkg/utils/maps"
 
 	v1 "github.com/cluster-management/pkg/api/v1"
 	"github.com/cluster-management/pkg/k8s"
@@ -169,6 +170,7 @@ func (c *Operate) mgFilter(page pagination.Page) {
 				neweks.EksName = info.Name
 				neweks.APIAddress = info.APIAddress
 				neweks.EksStackID = info.StackID
+				neweks.CVersion = info.COEVersion
 				neweks.CreationTimestamp = info.CreatedAt.Unix()
 				for k, v := range info.HealthStatusReason {
 					if s, ok := v.(string); ok {
@@ -509,6 +511,9 @@ func (c *Operate) ekshandler(clust *v1.Cluster, lic *license.License) (rerr erro
 	if err != nil {
 		klog.Errorf("%v handler k8s failed: %v", clust.Name, err)
 	}
+	// 取当前平台; magnum 侧的coe_version
+	spec.Architecture = runtime.GOARCH
+	spec.Version = neweks.CVersion
 	return nil
 }
 
