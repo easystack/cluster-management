@@ -169,7 +169,7 @@ func (s *Manage) newClient(host string) (cli.Client, error) {
 		BearerToken: token,
 		Transport:   defaultTransport,
 		Burst:       3,
-		Timeout:     30 * time.Second,
+		Timeout:     60 * time.Second,
 	}
 	return cli.New(config, clioption)
 }
