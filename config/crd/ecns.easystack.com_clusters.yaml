@@ -131,6 +131,8 @@ spec:
                     type: string
                   node_status:
                     type: string
+                  nodegroup:
+                    type: string
                   version:
                     type: string
                 type: object
