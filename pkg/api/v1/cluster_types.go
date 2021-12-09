@@ -136,6 +136,7 @@ type Node struct {
 	InternalIP string          `json:"internalIP,omitempty"`
 	ExternalIP string          `json:"externalIP,omitempty"`
 	Capacity   v1.ResourceList `json:"capacity,omitempty"`
+	NodeGroup  string          `json:"nodegroup,omitempty"`
 }
 
 // +kubebuilder:object:root=true

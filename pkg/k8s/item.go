@@ -15,6 +15,7 @@ const (
 	defaultTimeout = 10 * time.Second
 	// master node key in node labels
 	NodeLabelKeyMaster = "node-role.kubernetes.io/master"
+	NodeLabelNodeGroup = "node.es.io/nodegroup"
 )
 
 type getClientFn func() (cli.Client, error)
@@ -100,6 +101,7 @@ func (c *Client) update() (rerr error) {
 		tmpnode.Arch = node.Status.NodeInfo.Architecture
 		tmpnode.Version = node.Status.NodeInfo.KubeletVersion
 		tmpnode.Capacity = node.Status.Capacity
+		tmpnode.NodeGroup = node.Labels[NodeLabelNodeGroup]
 
 		if _, ok := node.Labels[NodeLabelKeyMaster]; ok {
 			tmpnode.Role = v1.NodeRoleMaster
