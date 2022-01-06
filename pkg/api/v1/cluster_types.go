@@ -128,15 +128,16 @@ type ClusterInfo struct {
 }
 
 type Node struct {
-	Name       string          `json:"node_name,omitempty"`
-	Role       NodeRole        `json:"node_role,omitempty"`
-	Status     NodeStat        `json:"node_status,omitempty"`
-	Version    string          `json:"version,omitempty"`
-	Arch       string          `json:"arch,omitempty"`
-	InternalIP string          `json:"internalIP,omitempty"`
-	ExternalIP string          `json:"externalIP,omitempty"`
-	Capacity   v1.ResourceList `json:"capacity,omitempty"`
-	NodeGroup  string          `json:"nodegroup,omitempty"`
+	Name                    string          `json:"node_name,omitempty"`
+	Role                    NodeRole        `json:"node_role,omitempty"`
+	Status                  NodeStat        `json:"node_status,omitempty"`
+	Version                 string          `json:"version,omitempty"`
+	Arch                    string          `json:"arch,omitempty"`
+	InternalIP              string          `json:"internalIP,omitempty"`
+	ExternalIP              string          `json:"externalIP,omitempty"`
+	Capacity                v1.ResourceList `json:"capacity,omitempty"`
+	ContainerRuntimeVersion string          `json:"containerRuntimeVersion,omitempty"`
+	NodeGroup               string          `json:"nodegroup,omitempty"`
 }
 
 // +kubebuilder:object:root=true
