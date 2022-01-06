@@ -101,6 +101,7 @@ func (c *Client) update() (rerr error) {
 		tmpnode.Arch = node.Status.NodeInfo.Architecture
 		tmpnode.Version = node.Status.NodeInfo.KubeletVersion
 		tmpnode.Capacity = node.Status.Capacity
+		tmpnode.ContainerRuntimeVersion = node.Status.NodeInfo.ContainerRuntimeVersion
 		tmpnode.NodeGroup = node.Labels[NodeLabelNodeGroup]
 
 		if _, ok := node.Labels[NodeLabelKeyMaster]; ok {
