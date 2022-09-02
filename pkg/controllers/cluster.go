@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -47,7 +46,6 @@ const (
 
 type health struct {
 	num    ReadyNum
-	arch   string
 	nodes  int
 	apiok  bool
 	reason []string
@@ -478,7 +476,6 @@ func (c *Operate) ekshandler(clust *v1.Cluster, lic *license.License) (rerr erro
 			if !health.apiok {
 				status.ClusterStatus = v1.ClusterDisConnected
 			}
-			spec.Architecture = health.arch
 			status.ClusterStatusReason.StatusReason = neweks.EksReason
 			status.ClusterStatusReason.Faults = append(status.ClusterStatusReason.Faults, health.reason...)
 			//(TODO) the magnum bug, when cluster delete failed.
@@ -512,7 +509,6 @@ func (c *Operate) ekshandler(clust *v1.Cluster, lic *license.License) (rerr erro
 		klog.Errorf("%v handler k8s failed: %v", clust.Name, err)
 	}
 	// 取当前平台; magnum 侧的coe_version
-	spec.Architecture = runtime.GOARCH
 	spec.Version = neweks.CVersion
 	return nil
 }
@@ -636,7 +632,6 @@ func parseMagnumHealths(mm map[string]string) *health {
 	return &health{
 		num:    num,
 		apiok:  true,
-		arch:   runtime.GOARCH,
 		nodes:  nodecount,
 		reason: healthReason,
 	}
