@@ -45,8 +45,11 @@ func ListFlavors(ctx context.Context, client *gophercloud.ServiceClient) ([]flav
 }
 
 // listFlavors ref: https://docs.openstack.org/api-ref/compute/#list-flavors-with-details
+// AllAccess (is_public=None) lists the full catalog across all projects so
+// private flavors resolve; it requires the admin role in the token and Nova
+// microversion >= 2.53 (pinned to 2.59 in ComputeClient).
 func listFlavors(ctx context.Context, client *gophercloud.ServiceClient) ([]flavors.Flavor, error) {
-	allPages, err := flavors.ListDetail(client, nil).AllPages(ctx)
+	allPages, err := flavors.ListDetail(client, flavors.ListOpts{AccessType: flavors.AllAccess}).AllPages(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list flavors: %w", err)
 	}
