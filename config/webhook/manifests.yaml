@@ -1,0 +1,47 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-cluster-x-k8s-io-machinedeployment
+  failurePolicy: Ignore
+  matchPolicy: Equivalent
+  name: vmachinedeployment-delete.ecns.easystack.io
+  rules:
+  - apiGroups:
+    - cluster.x-k8s.io
+    apiVersions:
+    - v1beta2
+    operations:
+    - DELETE
+    resources:
+    - machinedeployments
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-cluster-x-k8s-io-machinedeployment
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  name: vmachinedeployment.ecns.easystack.io
+  rules:
+  - apiGroups:
+    - cluster.x-k8s.io
+    apiVersions:
+    - v1beta2
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - machinedeployments
+  sideEffects: None

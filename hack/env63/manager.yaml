@@ -1,0 +1,198 @@
+# Test deployment for the env63 launcher namespace. Apply with:
+#   kubectl apply -f config/rbac/role.yaml          # ClusterRole manager-role
+#   kubectl apply -f hack/env63/manager.yaml
+# The deployment name differs from the helm-managed "cluster-manager" deployment
+# already running in the namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-management-controller-manager
+  namespace: launcher
+---
+# Leader election permissions (mirrors config/rbac/leader_election_role.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-management-leader-election-role
+  namespace: launcher
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-management-leader-election-rolebinding
+  namespace: launcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-management-leader-election-role
+subjects:
+  - kind: ServiceAccount
+    name: cluster-management-controller-manager
+    namespace: launcher
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-management-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: manager-role
+subjects:
+  - kind: ServiceAccount
+    name: cluster-management-controller-manager
+    namespace: launcher
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-management-controller-manager
+  namespace: launcher
+  labels:
+    app.kubernetes.io/name: cluster-management
+    control-plane: controller-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cluster-management
+      control-plane: controller-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cluster-management
+        control-plane: controller-manager
+    spec:
+      serviceAccountName: cluster-management-controller-manager
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: hub.easystack.cn/test/cluster-management:v7.0.1-devel
+          imagePullPolicy: IfNotPresent
+          # OpenStack credentials from the environment, same set as the
+          # cluster-manager deployment.
+          env:
+            - name: OS_IDENTITY_API_VERSION
+              value: "3"
+            - name: OS_ENDPOINT_TYPE
+              value: internalURL
+            - name: OS_DOMAIN_NAME
+              value: Default
+            - name: OS_AUTH_URL
+              valueFrom:
+                secretKeyRef:
+                  name: launcher-keystone-admin
+                  key: OS_AUTH_URL
+            - name: OS_REGION_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: launcher-keystone-admin
+                  key: OS_REGION_NAME
+            - name: OS_PROJECT_DOMAIN_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: launcher-keystone-admin
+                  key: OS_PROJECT_DOMAIN_NAME
+            - name: OS_PROJECT_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: launcher-keystone-admin
+                  key: OS_PROJECT_NAME
+            - name: OS_USER_DOMAIN_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: launcher-keystone-admin
+                  key: OS_USER_DOMAIN_NAME
+            - name: OS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: launcher-keystone-admin
+                  key: OS_USERNAME
+            - name: OS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: launcher-keystone-admin
+                  key: OS_PASSWORD
+          command:
+            - /manager
+          args:
+            - --leader-elect
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+            - --health-probe-bind-address=:8081
+          ports:
+            - name: webhook-server
+              containerPort: 9443
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: webhook-cert
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+      volumes:
+        - name: webhook-cert
+          secret:
+            secretName: cluster-management-webhook-server-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-management-webhook-service
+  namespace: launcher
+spec:
+  selector:
+    app.kubernetes.io/name: cluster-management
+    control-plane: controller-manager
+  ports:
+    - port: 443
+      targetPort: 9443

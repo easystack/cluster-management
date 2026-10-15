@@ -1,0 +1,113 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: clusters.baton.ecns.easystack.io
+spec:
+  group: baton.ecns.easystack.io
+  names:
+    kind: Cluster
+    listKind: ClusterList
+    plural: clusters
+    singular: cluster
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: Cluster is the Schema for the clusters API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of Cluster
+            type: object
+          status:
+            description: status defines the observed state of Cluster
+            properties:
+              clusterInfo:
+                description: clusterInfo records the aggregated information and total
+                  resource usage of the cluster.
+                properties:
+                  nodes:
+                    description: nodes is the total number of nodes.
+                    format: int64
+                    type: integer
+                  resourceUsage:
+                    description: resourceUsage is the total resource usage of all
+                      nodes of the cluster.
+                    properties:
+                      cpu:
+                        description: cpu is the number of vCPUs, resolved from the
+                          OpenStack flavor.
+                        format: int64
+                        type: integer
+                      memory:
+                        description: memory is the memory size in MiB, resolved from
+                          the OpenStack flavor.
+                        format: int64
+                        type: integer
+                    type: object
+                type: object
+              nodeInfo:
+                description: nodeInfo records the information and resource usage of
+                  all nodes of the cluster.
+                items:
+                  description: NodeInfo describes the information of one node (CAPI
+                    Machine) of the cluster.
+                  properties:
+                    flavor:
+                      description: flavor is the OpenStack flavor used by the node,
+                        e.g. 4C-8G.
+                      type: string
+                    name:
+                      description: name is the name of the node (the name of the CAPI
+                        Machine).
+                      type: string
+                    resourceUsage:
+                      description: resourceUsage is the resource usage of the node,
+                        resolved from the OpenStack flavor.
+                      properties:
+                        cpu:
+                          description: cpu is the number of vCPUs, resolved from the
+                            OpenStack flavor.
+                          format: int64
+                          type: integer
+                        memory:
+                          description: memory is the memory size in MiB, resolved
+                            from the OpenStack flavor.
+                          format: int64
+                          type: integer
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
