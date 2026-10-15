@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- baton_v1_cluster.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

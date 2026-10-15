@@ -1,0 +1,63 @@
+# ValidatingWebhookConfiguration for the MachineDeployment license check.
+# The caBundle must be replaced with the output of
+# hack/env63/gen-webhook-cert.sh, e.g.:
+#   CA_BUNDLE=$(hack/env63/gen-webhook-cert.sh | tail -1)
+#   sed "s/CA_BUNDLE_PLACEHOLDER/${CA_BUNDLE}/" validating-webhook-configuration.yaml | kubectl apply -f -
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: cluster-management-validating-webhook-configuration
+webhooks:
+  # create/update fail closed (license enforcement).
+  - name: vmachinedeployment.ecns.easystack.io
+    admissionReviewVersions:
+      - v1
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    clientConfig:
+      caBundle: CA_BUNDLE_PLACEHOLDER
+      service:
+        name: cluster-management-webhook-service
+        namespace: launcher
+        path: /validate-cluster-x-k8s-io-machinedeployment
+        port: 443
+    rules:
+      - apiGroups:
+          - cluster.x-k8s.io
+        # v1beta2 only: the typed decode cannot convert v1beta1 client-side;
+        # with matchPolicy Equivalent the apiserver converts v1beta1 requests
+        # to v1beta2 before delivery.
+        apiVersions:
+          - v1beta2
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - machinedeployments
+        scope: "*"
+  # deletes only feed the usage ledger and must never block cluster teardown
+  # during a webhook outage.
+  - name: vmachinedeployment-delete.ecns.easystack.io
+    admissionReviewVersions:
+      - v1
+    sideEffects: None
+    failurePolicy: Ignore
+    matchPolicy: Equivalent
+    clientConfig:
+      caBundle: CA_BUNDLE_PLACEHOLDER
+      service:
+        name: cluster-management-webhook-service
+        namespace: launcher
+        path: /validate-cluster-x-k8s-io-machinedeployment
+        port: 443
+    rules:
+      - apiGroups:
+          - cluster.x-k8s.io
+        apiVersions:
+          - v1beta2
+        operations:
+          - DELETE
+        resources:
+          - machinedeployments
+        scope: "*"
