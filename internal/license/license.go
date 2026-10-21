@@ -15,7 +15,8 @@ limitations under the License.
 */
 
 // Package license reads the resource limits of the product license from the
-// Cpconfig object of the ECP platform.
+// Cpconfig object of the ECP platform. The limits are the top-level CPU,
+// Memory and Nodes keys of the Cpconfig data.
 package license
 
 import (
@@ -59,7 +60,7 @@ type Reader struct {
 	// Reader reads the Cpconfig object. Using the API reader (not the cached
 	// client) avoids starting an informer for this type.
 	client.Reader
-	// Namespace and Name locate the Cpconfig object, defaulting to ems/eks.
+	// Namespace and Name locate the Cpconfig object, defaulting to ems/baton.
 	Namespace string
 	Name      string
 }
@@ -82,21 +83,19 @@ func (r *Reader) Current(ctx context.Context) (Limits, error) {
 		return Limits{}, fmt.Errorf("cpconfig %s has no data", key)
 	}
 
-	var config struct {
-		License map[string]any `json:"license"`
-	}
+	var config map[string]any
 	if err := yaml.Unmarshal([]byte(data), &config); err != nil {
 		return Limits{}, fmt.Errorf("parse data of cpconfig %s: %w", key, err)
 	}
 
 	var limits Limits
-	if limits.CPU, limits.UnlimitedCPU, err = readLimit(config.License, "CPU"); err != nil {
+	if limits.CPU, limits.UnlimitedCPU, err = readLimit(config, "CPU"); err != nil {
 		return Limits{}, fmt.Errorf("cpconfig %s: %w", key, err)
 	}
-	if limits.Memory, limits.UnlimitedMemory, err = readLimit(config.License, "Memory"); err != nil {
+	if limits.Memory, limits.UnlimitedMemory, err = readLimit(config, "Memory"); err != nil {
 		return Limits{}, fmt.Errorf("cpconfig %s: %w", key, err)
 	}
-	if limits.Nodes, limits.UnlimitedNodes, err = readLimit(config.License, "Nodes"); err != nil {
+	if limits.Nodes, limits.UnlimitedNodes, err = readLimit(config, "Nodes"); err != nil {
 		return Limits{}, fmt.Errorf("cpconfig %s: %w", key, err)
 	}
 	return limits, nil
@@ -116,10 +115,10 @@ func (r *Reader) name() string {
 	return CloudProductName
 }
 
-// readLimit reads one limit key of the license block. A missing key means the
-// resource is not limited.
-func readLimit(license map[string]any, key string) (int64, bool, error) {
-	value, ok := license[key]
+// readLimit reads one top-level limit key of the cpconfig data. A missing key
+// means the resource is not limited.
+func readLimit(config map[string]any, key string) (int64, bool, error) {
+	value, ok := config[key]
 	if !ok {
 		return 0, true, nil
 	}
