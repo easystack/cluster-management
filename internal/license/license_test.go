@@ -26,19 +26,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const licenseData = `CPU: Unlimited
-CPU_flavor: 4
+const licenseData = `CPU: 17
 Memory: 33792
-Memory_flavor: 8192
 Nodes: 5
-license:
-  CPU: 17
-  CPU_flavor: 4
-  Clusters: 1
-  Lb_enabled: true
-  Memory: 33792
-  Memory_flavor: 8192
-  Nodes: 5
+conf:
+  baton:
+    cluster:
+      public_vip: 172.63.0.2
+endpoints:
+  identity:
+    auth:
+      admin:
+        password: secret
 `
 
 func cpconfig(data string) *unstructured.Unstructured {
@@ -80,7 +79,7 @@ func TestCurrent(t *testing.T) {
 	})
 
 	t.Run("unlimited values", func(t *testing.T) {
-		data := "license:\n  CPU: Unlimited\n  Memory: Unlimited\n  Nodes: Unlimited\n"
+		data := "CPU: Unlimited\nMemory: Unlimited\nNodes: Unlimited\n"
 		limits, err := newReader(t, cpconfig(data)).Current(context.Background())
 		if err != nil {
 			t.Fatalf("Current: %v", err)
@@ -91,7 +90,7 @@ func TestCurrent(t *testing.T) {
 	})
 
 	t.Run("missing keys default to unlimited", func(t *testing.T) {
-		limits, err := newReader(t, cpconfig("license: {}\n")).Current(context.Background())
+		limits, err := newReader(t, cpconfig("conf: {}\n")).Current(context.Background())
 		if err != nil {
 			t.Fatalf("Current: %v", err)
 		}
@@ -101,7 +100,7 @@ func TestCurrent(t *testing.T) {
 	})
 
 	t.Run("string numbers", func(t *testing.T) {
-		data := "license:\n  CPU: \"17\"\n  Memory: \"33792\"\n  Nodes: \"5\"\n"
+		data := "CPU: \"17\"\nMemory: \"33792\"\nNodes: \"5\"\n"
 		limits, err := newReader(t, cpconfig(data)).Current(context.Background())
 		if err != nil {
 			t.Fatalf("Current: %v", err)
@@ -112,7 +111,7 @@ func TestCurrent(t *testing.T) {
 	})
 
 	t.Run("invalid value", func(t *testing.T) {
-		data := "license:\n  CPU: banana\n"
+		data := "CPU: banana\n"
 		if _, err := newReader(t, cpconfig(data)).Current(context.Background()); err == nil {
 			t.Fatal("expected error for invalid value")
 		}

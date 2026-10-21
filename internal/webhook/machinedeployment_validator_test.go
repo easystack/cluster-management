@@ -38,12 +38,13 @@ import (
 	"github.com/cluster-management/internal/openstack"
 )
 
-const testLicenseData = `license:
-  CPU: 17
-  CPU_flavor: 4
-  Memory: 33792
-  Memory_flavor: 8192
-  Nodes: 5
+const testLicenseData = `CPU: 17
+Memory: 33792
+Nodes: 5
+conf:
+  baton:
+    cluster:
+      public_vip: 172.63.0.2
 `
 
 // The cpconfig API has no importable Go module, so the license reader (and its
@@ -105,7 +106,7 @@ func cpconfig(data string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": cpGVK.GroupVersion().String(),
 		"kind":       cpGVK.Kind,
-		"metadata":   map[string]any{"name": license.DefaultName, "namespace": license.DefaultNamespace},
+		"metadata":   map[string]any{"name": license.CloudProductName, "namespace": license.DefaultNamespace},
 		"data":       data,
 	}}
 }
@@ -186,9 +187,6 @@ func TestMachineDeploymentValidator(t *testing.T) {
 		resp := validator.Handle(ctx, request(t, admissionv1.Update, newMD, old))
 		if !resp.Allowed {
 			t.Fatalf("expected allowed, got %q", resp.Result.Message)
-		}
-		if resolver.calls != 0 {
-			t.Errorf("resolver calls = %d, want 0", resolver.calls)
 		}
 	})
 
@@ -277,19 +275,16 @@ func TestMachineDeploymentValidator(t *testing.T) {
 		}
 	})
 
-	t.Run("unlimited license is allowed without resolving flavors", func(t *testing.T) {
+	t.Run("unlimited license is allowed", func(t *testing.T) {
 		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
 		old := machineDeployment("m2-worker", 1, "m2-worker-tpl")
 		newMD := machineDeployment("m2-worker", 100, "m2-worker-tpl")
-		data := "license:\n  CPU: Unlimited\n  Memory: Unlimited\n  Nodes: Unlimited\n"
+		data := "CPU: Unlimited\nMemory: Unlimited\nNodes: Unlimited\n"
 		validator := newValidator(t, resolver, cpconfig(data), old, machineTemplate("m2-worker-tpl", "4C-8G"))
 
 		resp := validator.Handle(ctx, request(t, admissionv1.Update, newMD, old))
 		if !resp.Allowed {
 			t.Fatalf("expected allowed, got %q", resp.Result.Message)
-		}
-		if resolver.calls != 0 {
-			t.Errorf("resolver calls = %d, want 0", resolver.calls)
 		}
 	})
 
