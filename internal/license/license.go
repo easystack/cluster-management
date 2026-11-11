@@ -16,7 +16,9 @@ limitations under the License.
 
 // Package license reads the resource limits of the product license from the
 // Cpconfig object of the ECP platform. The limits are the top-level CPU,
-// Memory and Nodes keys of the Cpconfig data.
+// Memory and Nodes keys of the Cpconfig data. Only an explicit "Unlimited"
+// value leaves a resource unlimited; a missing, null, negative, non-numeric or
+// otherwise invalid value counts as zero, which allows no use of the resource.
 package license
 
 import (
@@ -44,7 +46,8 @@ const (
 var cpconfigGVK = schema.GroupVersionKind{Group: "ecp.easystack.cn", Version: "v1", Kind: "Cpconfig"}
 
 // Limits is the resource limit of the license. A field whose Unlimited flag is
-// set imposes no limit on that resource.
+// set imposes no limit on that resource. A zero value with the flag unset
+// allows no use of that resource at all.
 type Limits struct {
 	CPU    int64
 	Memory int64
@@ -89,15 +92,9 @@ func (r *Reader) Current(ctx context.Context) (Limits, error) {
 	}
 
 	var limits Limits
-	if limits.CPU, limits.UnlimitedCPU, err = readLimit(config, "CPU"); err != nil {
-		return Limits{}, fmt.Errorf("cpconfig %s: %w", key, err)
-	}
-	if limits.Memory, limits.UnlimitedMemory, err = readLimit(config, "Memory"); err != nil {
-		return Limits{}, fmt.Errorf("cpconfig %s: %w", key, err)
-	}
-	if limits.Nodes, limits.UnlimitedNodes, err = readLimit(config, "Nodes"); err != nil {
-		return Limits{}, fmt.Errorf("cpconfig %s: %w", key, err)
-	}
+	limits.CPU, limits.UnlimitedCPU = readLimit(config, "CPU")
+	limits.Memory, limits.UnlimitedMemory = readLimit(config, "Memory")
+	limits.Nodes, limits.UnlimitedNodes = readLimit(config, "Nodes")
 	return limits, nil
 }
 
@@ -115,31 +112,32 @@ func (r *Reader) name() string {
 	return CloudProductName
 }
 
-// readLimit reads one top-level limit key of the cpconfig data. A missing key
-// means the resource is not limited.
-func readLimit(config map[string]any, key string) (int64, bool, error) {
-	value, ok := config[key]
-	if !ok {
-		return 0, true, nil
-	}
-
-	switch v := value.(type) {
-	case nil:
-		return 0, true, nil
+// readLimit reads one top-level limit key of the cpconfig data. Only an exact
+// "Unlimited" value leaves the resource unlimited; a missing key, a null value,
+// a negative or non-numeric value and values of any other type all count as
+// zero, which allows no use of that resource.
+func readLimit(config map[string]any, key string) (int64, bool) {
+	switch v := config[key].(type) {
 	case string:
 		if v == unlimitedValue {
-			return 0, true, nil
+			return 0, true
 		}
 		limit, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return 0, false, fmt.Errorf("invalid license limit %s: %q is not a number or %q", key, v, unlimitedValue)
+		if err != nil || limit < 0 {
+			return 0, false
 		}
-		return limit, false, nil
+		return limit, false
 	case float64:
-		return int64(v), false, nil
+		if v < 0 {
+			return 0, false
+		}
+		return int64(v), false
 	case int64:
-		return v, false, nil
+		if v < 0 {
+			return 0, false
+		}
+		return v, false
 	default:
-		return 0, false, fmt.Errorf("invalid license limit %s: unexpected value %v (type %T)", key, value, value)
+		return 0, false
 	}
 }

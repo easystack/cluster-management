@@ -89,13 +89,16 @@ func TestCurrent(t *testing.T) {
 		}
 	})
 
-	t.Run("missing keys default to unlimited", func(t *testing.T) {
+	t.Run("missing keys default to zero", func(t *testing.T) {
 		limits, err := newReader(t, cpconfig("conf: {}\n")).Current(context.Background())
 		if err != nil {
 			t.Fatalf("Current: %v", err)
 		}
-		if !limits.UnlimitedCPU || !limits.UnlimitedMemory || !limits.UnlimitedNodes {
-			t.Errorf("expected all unlimited, got %+v", limits)
+		if limits.UnlimitedCPU || limits.UnlimitedMemory || limits.UnlimitedNodes {
+			t.Errorf("expected no unlimited flags, got %+v", limits)
+		}
+		if limits.CPU != 0 || limits.Memory != 0 || limits.Nodes != 0 {
+			t.Errorf("limits = %+v, want zero values", limits)
 		}
 	})
 
@@ -110,10 +113,24 @@ func TestCurrent(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid value", func(t *testing.T) {
-		data := "CPU: banana\n"
-		if _, err := newReader(t, cpconfig(data)).Current(context.Background()); err == nil {
-			t.Fatal("expected error for invalid value")
+	t.Run("invalid values default to zero", func(t *testing.T) {
+		for name, value := range map[string]string{
+			"null":                "null",
+			"negative":            "-1",
+			"non-numeric":         "banana",
+			"empty string":        `""`,
+			"lowercase unlimited": "unlimited",
+			"trailing space":      `"Unlimited "`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				limits, err := newReader(t, cpconfig("CPU: "+value+"\n")).Current(context.Background())
+				if err != nil {
+					t.Fatalf("Current: %v", err)
+				}
+				if limits.UnlimitedCPU || limits.CPU != 0 {
+					t.Errorf("limits = %+v, want cpu 0 and not unlimited", limits)
+				}
+			})
 		}
 	})
 
