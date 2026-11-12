@@ -288,6 +288,23 @@ func TestMachineDeploymentValidator(t *testing.T) {
 		}
 	})
 
+	t.Run("license without limits denies any increase", func(t *testing.T) {
+		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
+		validator := newValidator(t, resolver,
+			cpconfig("conf: {}\n"),
+			machineTemplate("m2-new-tpl", "4C-8G"))
+
+		resp := validator.Handle(ctx, request(t, admissionv1.Create, machineDeployment("m2-new", 1, "m2-new-tpl"), nil))
+		if resp.Allowed {
+			t.Fatal("expected denial")
+		}
+		for _, want := range []string{"nodes 1 > 0", "cpu 4 > 0", "memory 8192Mi > 0Mi"} {
+			if message := resp.Result.Message; !strings.Contains(message, want) {
+				t.Errorf("message = %q, want it to contain %q", message, want)
+			}
+		}
+	})
+
 	t.Run("missing cpconfig fails closed", func(t *testing.T) {
 		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
 		old := machineDeployment("m2-worker", 1, "m2-worker-tpl")
