@@ -69,7 +69,9 @@ const (
 // that concurrent admissions cannot miss each other's increments; the ledger is
 // initialized by a full recount on first use and reconciled periodically.
 // The flavor catalog is cached locally (TTL) so repeated lookups do not query
-// nova again. A single webhook replica is assumed (the cache is per-process).
+// nova again. Dry-run requests are validated against the same projection but
+// never mutate the ledger. A single webhook replica is assumed (the cache is
+// per-process).
 type MachineDeploymentValidator struct {
 	// Reader reads all MachineDeployments and their infrastructure templates.
 	Reader client.Reader
@@ -132,6 +134,8 @@ func (v *MachineDeploymentValidator) RefreshUsage(ctx context.Context) {
 func (v *MachineDeploymentValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
 	logger := logf.FromContext(ctx)
 
+	dryRun := req.DryRun != nil && *req.DryRun
+
 	md := &clusterv1.MachineDeployment{}
 	var delta int64
 	switch req.Operation {
@@ -174,10 +178,13 @@ func (v *MachineDeploymentValidator) Handle(ctx context.Context, req admission.R
 
 	if delta < 0 {
 		// Scale-downs and deletions are never blocked; a ledger update failure
-		// only skews the accounting until the next refresh.
-		if _, err := v.applyUsage(ctx, deltaUsage, nil); err != nil {
-			logger.Error(err, "Failed to update usage ledger for replica decrease",
-				"machinedeployment", client.ObjectKeyFromObject(md).String())
+		// only skews the accounting until the next refresh. Dry-run requests
+		// leave the ledger untouched.
+		if !dryRun {
+			if _, err := v.applyUsage(ctx, deltaUsage, nil, true); err != nil {
+				logger.Error(err, "Failed to update usage ledger for replica decrease",
+					"machinedeployment", client.ObjectKeyFromObject(md).String())
+			}
 		}
 		return admission.Allowed("replica count is not increased")
 	}
@@ -194,7 +201,7 @@ func (v *MachineDeploymentValidator) Handle(ctx context.Context, req admission.R
 
 	message, err := v.applyUsage(ctx, deltaUsage, func(total resourceUsage) string {
 		return exceeds(total, limits)
-	})
+	}, !dryRun)
 	if err != nil {
 		logger.Error(err, "Failed to update usage ledger",
 			"machinedeployment", client.ObjectKeyFromObject(md).String())
@@ -210,22 +217,27 @@ func (v *MachineDeploymentValidator) Handle(ctx context.Context, req admission.R
 }
 
 // applyUsage atomically initializes the ledger on first use, checks the
-// projected total with check (when non-nil) and applies the delta. On a
-// non-empty check result or an error the ledger is left unchanged.
-func (v *MachineDeploymentValidator) applyUsage(ctx context.Context, delta resourceUsage, check func(resourceUsage) string) (string, error) {
+// projected total with check (when non-nil) and applies the delta when commit
+// is true. On a non-empty check result or an error the ledger is left
+// unchanged; with commit false (dry-run) the projection is checked but nothing
+// is written, including the first-use initialization.
+func (v *MachineDeploymentValidator) applyUsage(ctx context.Context, delta resourceUsage, check func(resourceUsage) string, commit bool) (string, error) {
 	v.ledgerMu.Lock()
 	defer v.ledgerMu.Unlock()
 
+	total := v.ledger
 	if !v.ledgerReady {
 		usage, err := v.recountUsage(ctx)
 		if err != nil {
 			return "", err
 		}
-		v.ledger = usage
-		v.ledgerReady = true
+		if commit {
+			v.ledger = usage
+			v.ledgerReady = true
+		}
+		total = usage
 	}
 
-	total := v.ledger
 	total.cpu += delta.cpu
 	total.memory += delta.memory
 	total.nodes += delta.nodes
@@ -234,7 +246,9 @@ func (v *MachineDeploymentValidator) applyUsage(ctx context.Context, delta resou
 			return message, nil
 		}
 	}
-	v.ledger = total
+	if commit {
+		v.ledger = total
+	}
 	return "", nil
 }
 
