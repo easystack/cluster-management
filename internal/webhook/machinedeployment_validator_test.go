@@ -153,6 +153,20 @@ func request(t *testing.T, operation admissionv1.Operation, md, oldMD *clusterv1
 	}}
 }
 
+func dryRunRequest(t *testing.T, operation admissionv1.Operation, md, oldMD *clusterv1.MachineDeployment) admission.Request {
+	t.Helper()
+	req := request(t, operation, md, oldMD)
+	dryRun := true
+	req.DryRun = &dryRun
+	return req
+}
+
+func snapshotLedger(v *MachineDeploymentValidator) (resourceUsage, bool) {
+	v.ledgerMu.Lock()
+	defer v.ledgerMu.Unlock()
+	return v.ledger, v.ledgerReady
+}
+
 func flavor4C8G() map[string]openstack.Flavor {
 	return map[string]openstack.Flavor{
 		"4C-8G": {Name: "4C-8G", CPU: 4, MemoryMiB: 8192},
@@ -314,6 +328,129 @@ func TestMachineDeploymentValidator(t *testing.T) {
 		resp := validator.Handle(ctx, request(t, admissionv1.Update, newMD, old))
 		if resp.Allowed {
 			t.Fatal("expected denial")
+		}
+		if message := resp.Result.Message; !strings.Contains(message, "cannot read license") {
+			t.Errorf("message = %q, want it to contain %q", message, "cannot read license")
+		}
+	})
+
+	t.Run("dry run create does not update the ledger", func(t *testing.T) {
+		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
+		existing := machineDeployment("m2-worker", 1, "m2-worker-tpl")
+		newMD := machineDeployment("m2-new", 1, "m2-new-tpl")
+		validator := newValidator(t, resolver,
+			cpconfig(testLicenseData),
+			existing, machineTemplate("m2-worker-tpl", "4C-8G"),
+			machineTemplate("m2-new-tpl", "4C-8G"))
+
+		resp := validator.Handle(ctx, dryRunRequest(t, admissionv1.Create, newMD, nil))
+		if !resp.Allowed {
+			t.Fatalf("expected allowed, got %q", resp.Result.Message)
+		}
+		if usage, ready := snapshotLedger(validator); ready || usage != (resourceUsage{}) {
+			t.Fatalf("dry run mutated the ledger: usage=%+v ready=%v", usage, ready)
+		}
+
+		resp = validator.Handle(ctx, request(t, admissionv1.Create, newMD, nil))
+		if !resp.Allowed {
+			t.Fatalf("expected allowed, got %q", resp.Result.Message)
+		}
+		if usage, ready := snapshotLedger(validator); !ready || usage != (resourceUsage{cpu: 8, memory: 16384, nodes: 2}) {
+			t.Fatalf("ledger = %+v (ready=%v), want {cpu:8 memory:16384 nodes:2} (ready=true)", usage, ready)
+		}
+	})
+
+	t.Run("dry run exceeding limits is denied like a real request", func(t *testing.T) {
+		old := machineDeployment("m2-worker", 4, "m2-worker-tpl")
+		newMD := machineDeployment("m2-worker", 5, "m2-worker-tpl")
+
+		dryValidator := newValidator(t, &fakeFlavorLister{flavors: flavor4C8G()},
+			cpconfig(testLicenseData), old, machineTemplate("m2-worker-tpl", "4C-8G"))
+		dryResp := dryValidator.Handle(ctx, dryRunRequest(t, admissionv1.Update, newMD, old))
+		if dryResp.Allowed {
+			t.Fatal("expected dry run denial")
+		}
+
+		realValidator := newValidator(t, &fakeFlavorLister{flavors: flavor4C8G()},
+			cpconfig(testLicenseData), old, machineTemplate("m2-worker-tpl", "4C-8G"))
+		realResp := realValidator.Handle(ctx, request(t, admissionv1.Update, newMD, old))
+		if realResp.Allowed {
+			t.Fatal("expected real request denial")
+		}
+
+		if dryResp.Result.Message != realResp.Result.Message {
+			t.Errorf("dry run message = %q, real message = %q, want identical", dryResp.Result.Message, realResp.Result.Message)
+		}
+		if usage, ready := snapshotLedger(dryValidator); ready || usage != (resourceUsage{}) {
+			t.Errorf("dry run mutated the ledger: usage=%+v ready=%v", usage, ready)
+		}
+	})
+
+	t.Run("dry run scale down does not update the ledger", func(t *testing.T) {
+		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
+		stored := machineDeployment("m2-worker", 3, "m2-worker-tpl")
+		validator := newValidator(t, resolver, cpconfig(testLicenseData), stored, machineTemplate("m2-worker-tpl", "4C-8G"))
+
+		two := machineDeployment("m2-worker", 2, "m2-worker-tpl")
+		resp := validator.Handle(ctx, request(t, admissionv1.Update, two, stored))
+		if !resp.Allowed {
+			t.Fatalf("expected allowed, got %q", resp.Result.Message)
+		}
+		if usage, ready := snapshotLedger(validator); !ready || usage != (resourceUsage{cpu: 8, memory: 16384, nodes: 2}) {
+			t.Fatalf("ledger after real scale down = %+v (ready=%v)", usage, ready)
+		}
+
+		one := machineDeployment("m2-worker", 1, "m2-worker-tpl")
+		resp = validator.Handle(ctx, dryRunRequest(t, admissionv1.Update, one, two))
+		if !resp.Allowed {
+			t.Fatalf("expected allowed, got %q", resp.Result.Message)
+		}
+		if usage, ready := snapshotLedger(validator); !ready || usage != (resourceUsage{cpu: 8, memory: 16384, nodes: 2}) {
+			t.Fatalf("dry run scale down mutated the ledger: usage=%+v ready=%v", usage, ready)
+		}
+	})
+
+	t.Run("dry run delete does not update the ledger", func(t *testing.T) {
+		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
+		worker := machineDeployment("m2-worker", 2, "m2-worker-tpl")
+		keeper := machineDeployment("m2-keep", 1, "m2-keep-tpl")
+		validator := newValidator(t, resolver,
+			cpconfig(testLicenseData), worker, keeper,
+			machineTemplate("m2-worker-tpl", "4C-8G"), machineTemplate("m2-keep-tpl", "4C-8G"))
+
+		validator.RefreshUsage(ctx)
+		if usage, ready := snapshotLedger(validator); !ready || usage != (resourceUsage{cpu: 12, memory: 24576, nodes: 3}) {
+			t.Fatalf("ledger after refresh = %+v (ready=%v)", usage, ready)
+		}
+
+		resp := validator.Handle(ctx, dryRunRequest(t, admissionv1.Delete, worker, worker))
+		if !resp.Allowed {
+			t.Fatalf("expected allowed, got %q", resp.Result.Message)
+		}
+		if usage, ready := snapshotLedger(validator); !ready || usage != (resourceUsage{cpu: 12, memory: 24576, nodes: 3}) {
+			t.Fatalf("dry run delete mutated the ledger: usage=%+v ready=%v", usage, ready)
+		}
+	})
+
+	t.Run("dry run still fails closed", func(t *testing.T) {
+		old := machineDeployment("m2-worker", 1, "m2-worker-tpl")
+		newMD := machineDeployment("m2-worker", 2, "m2-worker-tpl")
+
+		unreachable := newValidator(t, &fakeFlavorLister{err: errors.New("openstack unreachable")},
+			cpconfig(testLicenseData), old, machineTemplate("m2-worker-tpl", "4C-8G"))
+		resp := unreachable.Handle(ctx, dryRunRequest(t, admissionv1.Update, newMD, old))
+		if resp.Allowed {
+			t.Fatal("expected dry run denial on flavor resolution failure")
+		}
+		if message := resp.Result.Message; !strings.Contains(message, "cannot verify license limits") {
+			t.Errorf("message = %q, want it to contain %q", message, "cannot verify license limits")
+		}
+
+		noLicense := newValidator(t, &fakeFlavorLister{flavors: flavor4C8G()},
+			machineTemplate("m2-new-tpl", "4C-8G"))
+		resp = noLicense.Handle(ctx, dryRunRequest(t, admissionv1.Create, machineDeployment("m2-new", 1, "m2-new-tpl"), nil))
+		if resp.Allowed {
+			t.Fatal("expected dry run denial on missing license")
 		}
 		if message := resp.Result.Message; !strings.Contains(message, "cannot read license") {
 			t.Errorf("message = %q, want it to contain %q", message, "cannot read license")
