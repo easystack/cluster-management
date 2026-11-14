@@ -166,21 +166,22 @@ func (v *MachineDeploymentValidator) Handle(ctx context.Context, req admission.R
 		return admission.Allowed("replica count is not changed")
 	}
 
-	// The MachineDeployment template is immutable, so the template flavor is
-	// valid for the object under admission in every operation.
-	flavor, err := v.machineTemplateFlavor(ctx, md)
-	if err != nil {
-		logger.Error(err, "Failed to resolve flavor for MachineDeployment admission",
-			"machinedeployment", client.ObjectKeyFromObject(md).String())
-		return admission.Denied(fmt.Sprintf("cannot verify license limits: %v", err))
-	}
-	deltaUsage := resourceUsage{}.withFlavor(flavor, delta)
-
 	if delta < 0 {
-		// Scale-downs and deletions are never blocked; a ledger update failure
-		// only skews the accounting until the next refresh. Dry-run requests
-		// leave the ledger untouched.
+		// Scale-downs and deletions are never blocked. The infrastructure
+		// template may already be gone (e.g. a cascading cluster deletion
+		// removed OpenStackMachineTemplates before MachineDeployments), so the
+		// flavor is unknowable: skip the ledger update and let the periodic
+		// recount repair the accounting once the object is gone. A ledger
+		// update failure only skews the accounting until the next refresh.
+		// Dry-run requests leave the ledger untouched.
+		flavor, err := v.machineTemplateFlavor(ctx, md)
+		if err != nil {
+			logger.Error(err, "Failed to resolve flavor for replica decrease, allowing without ledger update",
+				"machinedeployment", client.ObjectKeyFromObject(md).String())
+			return admission.Allowed("replica count is not increased")
+		}
 		if !dryRun {
+			deltaUsage := resourceUsage{}.withFlavor(flavor, delta)
 			if _, err := v.applyUsage(ctx, deltaUsage, nil, true); err != nil {
 				logger.Error(err, "Failed to update usage ledger for replica decrease",
 					"machinedeployment", client.ObjectKeyFromObject(md).String())
@@ -188,6 +189,16 @@ func (v *MachineDeploymentValidator) Handle(ctx context.Context, req admission.R
 		}
 		return admission.Allowed("replica count is not increased")
 	}
+
+	// Creation and scale-up must be verifiable: without a resolvable flavor the
+	// license limits cannot be enforced (fail-closed).
+	flavor, err := v.machineTemplateFlavor(ctx, md)
+	if err != nil {
+		logger.Error(err, "Failed to resolve flavor for MachineDeployment admission",
+			"machinedeployment", client.ObjectKeyFromObject(md).String())
+		return admission.Denied(fmt.Sprintf("cannot verify license limits: %v", err))
+	}
+	deltaUsage := resourceUsage{}.withFlavor(flavor, delta)
 
 	limits, err := v.License.Current(ctx)
 	if err != nil {

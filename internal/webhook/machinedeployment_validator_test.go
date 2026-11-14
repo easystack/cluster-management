@@ -204,6 +204,54 @@ func TestMachineDeploymentValidator(t *testing.T) {
 		}
 	})
 
+	t.Run("scale down with missing template is allowed without ledger update", func(t *testing.T) {
+		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
+		old := machineDeployment("m2-worker", 3, "missing-tpl")
+		newMD := machineDeployment("m2-worker", 2, "missing-tpl")
+		validator := newValidator(t, resolver, cpconfig(testLicenseData))
+		validator.ledger = resourceUsage{cpu: 12, memory: 24576, nodes: 3}
+		validator.ledgerReady = true
+
+		resp := validator.Handle(ctx, request(t, admissionv1.Update, newMD, old))
+		if !resp.Allowed {
+			t.Fatalf("expected allowed, got %q", resp.Result.Message)
+		}
+		if usage, ready := snapshotLedger(validator); !ready || usage != (resourceUsage{cpu: 12, memory: 24576, nodes: 3}) {
+			t.Fatalf("scale down with missing template mutated the ledger: usage=%+v ready=%v", usage, ready)
+		}
+	})
+
+	t.Run("delete with missing template is allowed without ledger update", func(t *testing.T) {
+		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
+		worker := machineDeployment("m2-worker", 2, "missing-tpl")
+		validator := newValidator(t, resolver, cpconfig(testLicenseData))
+		validator.ledger = resourceUsage{cpu: 8, memory: 16384, nodes: 2}
+		validator.ledgerReady = true
+
+		resp := validator.Handle(ctx, request(t, admissionv1.Delete, worker, worker))
+		if !resp.Allowed {
+			t.Fatalf("expected allowed, got %q", resp.Result.Message)
+		}
+		if usage, ready := snapshotLedger(validator); !ready || usage != (resourceUsage{cpu: 8, memory: 16384, nodes: 2}) {
+			t.Fatalf("delete with missing template mutated the ledger: usage=%+v ready=%v", usage, ready)
+		}
+	})
+
+	t.Run("scale up with missing template fails closed", func(t *testing.T) {
+		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
+		old := machineDeployment("m2-worker", 1, "missing-tpl")
+		newMD := machineDeployment("m2-worker", 2, "missing-tpl")
+		validator := newValidator(t, resolver, cpconfig(testLicenseData))
+
+		resp := validator.Handle(ctx, request(t, admissionv1.Update, newMD, old))
+		if resp.Allowed {
+			t.Fatal("expected denial")
+		}
+		if message := resp.Result.Message; !strings.Contains(message, "cannot verify license limits") {
+			t.Errorf("message = %q, want it to contain %q", message, "cannot verify license limits")
+		}
+	})
+
 	t.Run("create within limits is allowed", func(t *testing.T) {
 		resolver := &fakeFlavorLister{flavors: flavor4C8G()}
 		existing := machineDeployment("m2-worker", 1, "m2-worker-tpl")
